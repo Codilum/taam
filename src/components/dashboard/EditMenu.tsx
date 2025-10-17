@@ -10,10 +10,14 @@ import { toast } from "sonner";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
-import { PlusCircle, Pencil, Trash2, Eye, EyeOff, GripVertical } from "lucide-react";
-import Image from "next/image";
+import { PlusCircle, Pencil, Trash2, Eye, EyeOff, GripVertical, Download } from "lucide-react";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -21,7 +25,6 @@ import {
   DragDropContext, Droppable, Draggable, DropResult
 } from "@hello-pangea/dnd";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 
 interface MenuCategory {
   id: number;
@@ -52,6 +55,13 @@ interface StandardCategory {
   description: string;
 }
 
+interface ImportResponse {
+  created?: number;
+  updated?: number;
+  errors?: string[];
+  items?: MenuItem[];
+}
+
 export default function EditMenu({ activeTeam }: { activeTeam: string }) {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
@@ -61,6 +71,18 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [importCategoryId, setImportCategoryId] = useState<string>("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+
+  const resetImportState = () => {
+    setImportCategoryId("");
+    setImportFile(null);
+    setImportErrors([]);
+    setIsImporting(false);
+  };
 
   // Загрузка стандартных категорий из бекенда
   useEffect(() => {
@@ -202,7 +224,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
   // Удаление категории
   const handleDeleteCategory = async (categoryId: number) => {
     if (!confirm("Удалить категорию и все блюда в ней?")) return;
-    
+
     try {
       const res = await fetch(
         `/api/restaurants/${activeTeam}/menu-categories/${categoryId}`,
@@ -219,6 +241,89 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       }
     } catch (error) {
       toast.error("Ошибка при удалении категории");
+    }
+  };
+
+  const handleImportSubmit = async () => {
+    if (!activeTeam) {
+      toast.error("Выберите заведение");
+      return;
+    }
+    if (!importCategoryId) {
+      toast.error("Выберите категорию для импорта");
+      return;
+    }
+    if (!importFile) {
+      toast.error("Выберите CSV файл");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportErrors([]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", importFile);
+
+      const response = await fetch(
+        `/api/restaurants/${activeTeam}/menu-categories/${importCategoryId}/import-csv`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("access_token")}`
+          },
+          body: formData
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let message = "Ошибка импорта CSV";
+        if (errorText) {
+          try {
+            const parsed = JSON.parse(errorText);
+            message = parsed.detail || message;
+          } catch {
+            message = errorText;
+          }
+        }
+        throw new Error(message);
+      }
+
+      const data: ImportResponse = await response.json();
+      const categoryIdNumber = Number(importCategoryId);
+
+      if (Array.isArray(data.items)) {
+        const normalizedItems = data.items
+          .map((item) => ({
+            ...item,
+            category_id: categoryIdNumber
+          }))
+          .sort((a, b) => a.placenum - b.placenum);
+
+        setItems((prevItems) => {
+          const otherItems = prevItems.filter((item) => item.category_id !== categoryIdNumber);
+          return [...otherItems, ...normalizedItems];
+        });
+      }
+
+      if (data.errors && data.errors.length > 0) {
+        setImportErrors(data.errors);
+        toast.warning(
+          `Импорт завершен с предупреждениями: добавлено ${data.created || 0}, обновлено ${data.updated || 0}`
+        );
+      } else {
+        toast.success(
+          `Импорт завершен: добавлено ${data.created || 0}, обновлено ${data.updated || 0}`
+        );
+        setIsImportDialogOpen(false);
+        resetImportState();
+      }
+    } catch (error: any) {
+      console.error("Ошибка импорта CSV:", error);
+      toast.error(error?.message || "Ошибка импорта CSV");
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -299,7 +404,17 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         
         if (res.ok) {
           const newItem = await res.json();
-          
+
+          const appendItem = (itemToAppend: MenuItem) => {
+            setItems((prevItems) => [
+              ...prevItems,
+              {
+                ...itemToAppend,
+                category_id: editingCategory.id
+              }
+            ]);
+          };
+
           // Если есть фото, загружаем его после создания блюда
           if (photoFile) {
             await uploadItemPhoto(newItem.id, photoFile);
@@ -314,14 +429,14 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
             );
             if (updatedRes.ok) {
               const updatedItem = await updatedRes.json();
-              setItems([...items, { ...updatedItem, category_id: editingCategory.id }]);
+              appendItem(updatedItem);
             } else {
-              setItems([...items, { ...newItem, category_id: editingCategory.id }]);
+              appendItem(newItem);
             }
           } else {
-            setItems([...items, { ...newItem, category_id: editingCategory.id }]);
+            appendItem(newItem);
           }
-          
+
           toast.success("Блюдо добавлено");
         }
       }
@@ -525,6 +640,106 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
     <div className="flex flex-col gap-6 p-4 max-w-full overflow-x-hidden">
       <h2 className="text-xl font-bold">Меню заведения</h2>
 
+      {/* Диалог импорта блюд */}
+      <Dialog
+        open={isImportDialogOpen}
+        onOpenChange={(open) => {
+          setIsImportDialogOpen(open);
+          if (!open) {
+            resetImportState();
+          }
+        }}
+      >
+        <DialogContent className="max-w-[95vw] w-full mx-auto sm:max-w-xl rounded-lg">
+          <DialogHeader className="px-4 sm:px-6 pt-4 sm:pt-6">
+            <DialogTitle className="text-lg sm:text-xl text-center sm:text-left">
+              Импорт блюд из CSV
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              Выберите категорию и загрузите CSV файл. Стандартное фото будет установлено автоматически, позже его можно заменить.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4">
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Категория*</Label>
+              <Select value={importCategoryId} onValueChange={setImportCategoryId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Выберите категорию" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((category) => (
+                    <SelectItem key={category.id} value={String(category.id)} className="text-sm">
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">CSV файл*</Label>
+              <Input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] || null;
+                  setImportFile(file);
+                }}
+              />
+              {importFile && (
+                <p className="text-xs text-gray-500">Выбран файл: {importFile.name}</p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" asChild>
+                <a
+                  href="/examples/menu_import_template.csv"
+                  download
+                  className="flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Скачать пример</span>
+                </a>
+              </Button>
+            </div>
+
+            {importErrors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-600 space-y-2">
+                <p className="font-medium">Не удалось обработать некоторые строки:</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {importErrors.map((error, index) => (
+                    <li key={`${error}-${index}`}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="px-4 sm:px-6 pb-4 sm:pb-6 flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsImportDialogOpen(false);
+                resetImportState();
+              }}
+              className="flex-1"
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={handleImportSubmit}
+              disabled={isImporting}
+              className="flex-1"
+              style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
+            >
+              {isImporting ? "Импорт..." : "Импортировать"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Диалог для категории */}
       <Dialog open={isCategoryDialogOpen} onOpenChange={setIsCategoryDialogOpen}>
         <DialogContent className="max-w-[95vw] w-full mx-auto sm:max-w-md rounded-lg">
@@ -578,18 +793,31 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         </DialogContent>
       </Dialog>
 
-      {/* Кнопка добавления категории */}
-      <Button 
-        onClick={() => {
-          setEditingCategory(null);
-          setIsCategoryDialogOpen(true);
-        }} 
-        variant="outline" 
-        className="w-fit"
-        style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
-      >
-        <PlusCircle className="w-4 h-4 mr-2" /> Добавить категорию
-      </Button>
+      {/* Кнопки управления категориями */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          onClick={() => {
+            resetImportState();
+            setIsImportDialogOpen(true);
+          }}
+          variant="outline"
+          className="w-fit"
+          style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
+        >
+          <Download className="w-4 h-4 mr-2" /> Импорт CSV
+        </Button>
+        <Button
+          onClick={() => {
+            setEditingCategory(null);
+            setIsCategoryDialogOpen(true);
+          }}
+          variant="outline"
+          className="w-fit"
+          style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
+        >
+          <PlusCircle className="w-4 h-4 mr-2" /> Добавить категорию
+        </Button>
+      </div>
 
       {/* Список категорий с drag-and-drop */}
       <DragDropContext onDragEnd={handleCategoryDragEnd}>
