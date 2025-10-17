@@ -799,6 +799,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     0
   );
   const cartCount = cartDetails.reduce((sum, item) => sum + item.quantity, 0);
+  const uniqueItemCount = cartDetails.length;
   const selectedItemQuantity = selectedItem
     ? cartItems[selectedItem.id] || 0
     : 0;
@@ -807,7 +808,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       ? timeLeft <= 1
         ? "Менее минуты до очистки"
         : `Список сохранится примерно ${timeLeft} мин.`
-      : "Список сохраняется 30 минут после изменения.";
+      : "";
 
   return (
     <div className="bg-gray-100 min-h-screen">
@@ -1305,7 +1306,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
           <button
             type="button"
             onClick={() => setIsCartOpen(true)}
-            className="fixed top-5 right-4 z-40 w-14 h-14 rounded-full bg-black text-white flex items-center justify-center shadow-lg "
+            className="fixed bottom-5 right-4 z-40 w-14 h-14 rounded-full bg-black text-white flex items-center justify-center shadow-lg"
           >
             <ShoppingCart className="w-6 h-6" />
             <span className="absolute -top-1 -right-1 bg-[#FFEB5A] text-black text-xs font-semibold px-2 py-0.5 rounded-full">
@@ -1318,8 +1319,11 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               <DialogTitle className="text-lg font-semibold">
                 Мой список
               </DialogTitle>
-              <p className="text-xs text-gray-500">{timeLeftText}</p>
-              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>Позиций: {uniqueItemCount}</span>
+                {timeLeftText && <span>{timeLeftText}</span>}
+              </div>
+              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-0">
                 {cartDetails.map((item) => (
                   <div
                     key={item.id}

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
@@ -32,6 +32,20 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 DEFAULT_MENU_ITEM_PHOTO = "https://cdn0.iconfinder.com/data/icons/iconic-kitchen-stuffs-3/64/Kitchen_line_icon_-_expand_-_62px_Tudung_Saji-1024.png"
+
+
+def delete_uploaded_file(filename: Optional[str]) -> None:
+    if not filename:
+        return
+    if filename.startswith("http://") or filename.startswith("https://"):
+        return
+    file_path = UPLOAD_DIR / filename
+    if file_path.exists():
+        try:
+            file_path.unlink()
+        except OSError:
+            pass
+
 
 # Предопределенные типы ресторанов
 RESTAURANT_TYPES = [
@@ -684,27 +698,56 @@ def update_profile(req: UpdateProfileRequest, current_user: dict = Depends(get_c
 @app.delete("/api/account")
 def delete_account(current_user: dict = Depends(get_current_user)):
     conn = sqlite3.connect("users.db")
+    conn.execute("PRAGMA foreign_keys = ON")
     c = conn.cursor()
-    
-    # Удаляем фото пользователя, если есть
+
     c.execute("SELECT photo FROM users WHERE email = ?", (current_user["email"],))
-    photo = c.fetchone()
-    if photo and photo[0] and os.path.exists(UPLOAD_DIR / photo[0]):
-        try:
-            os.remove(UPLOAD_DIR / photo[0])
-        except OSError:
-            pass
-    
-    # Удаляем пользователя и связанные коды
-    c.execute("DELETE FROM users WHERE email = ?", (current_user["email"],))
-    c.execute("DELETE FROM codes WHERE email = ?", (current_user["email"],))
-    
-    if c.rowcount == 0:
+    user_row = c.fetchone()
+    if not user_row:
         conn.close()
         raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
+
+    delete_uploaded_file(user_row[0])
+
+    c.execute(
+        "SELECT id, photo FROM restaurants WHERE owner_email = ?",
+        (current_user["email"],),
+    )
+    restaurant_rows = c.fetchall()
+    restaurant_ids = [row[0] for row in restaurant_rows]
+
+    for _, photo in restaurant_rows:
+        delete_uploaded_file(photo)
+
+    if restaurant_ids:
+        placeholders = ",".join("?" for _ in restaurant_ids)
+        params = tuple(restaurant_ids)
+
+        c.execute(
+            f"SELECT photo FROM menu_categories WHERE restaurant_id IN ({placeholders})",
+            params,
+        )
+        for (photo,) in c.fetchall():
+            delete_uploaded_file(photo)
+
+        c.execute(
+            f"""
+            SELECT mi.photo
+            FROM menu_items mi
+            JOIN menu_categories mc ON mi.category_id = mc.id
+            WHERE mc.restaurant_id IN ({placeholders})
+        """,
+            params,
+        )
+        for (photo,) in c.fetchall():
+            delete_uploaded_file(photo)
+
+    c.execute("DELETE FROM codes WHERE email = ?", (current_user["email"],))
+    c.execute("DELETE FROM users WHERE email = ?", (current_user["email"],))
+
     conn.commit()
     conn.close()
+
     return {"message": "Аккаунт удалён"}
 # === Загрузка фото пользователя (без изменений) ===
 @app.post("/api/upload-photo")
@@ -743,27 +786,6 @@ async def upload_photo(file: UploadFile = File(...), current_user: dict = Depend
         "payment_method_number": user[6],
         "is_profile_complete": is_profile_complete
     }
-
-# === Удаление аккаунта (без изменений) ===
-@app.delete("/api/account")
-def delete_account(current_user: dict = Depends(get_current_user)):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-    c.execute("SELECT photo FROM users WHERE email = ?", (current_user["email"],))
-    photo = c.fetchone()
-    if photo and photo[0] and os.path.exists(photo[0]):
-        try:
-            os.remove(photo[0])
-        except OSError:
-            pass
-    c.execute("DELETE FROM users WHERE email = ?", (current_user["email"],))
-    c.execute("DELETE FROM codes WHERE email = ?", (current_user["email"],))
-    if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    conn.commit()
-    conn.close()
-    return {"message": "Аккаунт удалён"}
 
 # === Рестораны ===
 @app.post("/api/restaurants", response_model=Restaurant)
@@ -953,15 +975,46 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
 @app.delete("/api/restaurants/{restaurant_id}")
 def delete_restaurant(restaurant_id: int, current_user: dict = Depends(get_current_user)):
     conn = sqlite3.connect("users.db")
+    conn.execute("PRAGMA foreign_keys = ON")
     c = conn.cursor()
+
     c.execute(
-        "SELECT id FROM restaurants WHERE id = ? AND owner_email = ?",
+        "SELECT id, photo FROM restaurants WHERE id = ? AND owner_email = ?",
         (restaurant_id, current_user["email"]),
     )
     restaurant = c.fetchone()
     if not restaurant:
         conn.close()
         raise HTTPException(status_code=404, detail="Заведение не найдено")
+
+    c.execute(
+        "SELECT COUNT(*) FROM restaurants WHERE owner_email = ?",
+        (current_user["email"],),
+    )
+    total_restaurants = c.fetchone()[0] or 0
+    if total_restaurants <= 1:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Нельзя удалить единственное заведение")
+
+    delete_uploaded_file(restaurant[1])
+
+    c.execute(
+        "SELECT id, photo FROM menu_categories WHERE restaurant_id = ?",
+        (restaurant_id,),
+    )
+    categories = c.fetchall()
+    category_ids = [row[0] for row in categories]
+    for _, photo in categories:
+        delete_uploaded_file(photo)
+
+    if category_ids:
+        placeholders = ",".join("?" for _ in category_ids)
+        c.execute(
+            f"SELECT photo FROM menu_items WHERE category_id IN ({placeholders})",
+            tuple(category_ids),
+        )
+        for (photo,) in c.fetchall():
+            delete_uploaded_file(photo)
 
     c.execute(
         "DELETE FROM restaurants WHERE id = ? AND owner_email = ?",
@@ -1273,54 +1326,109 @@ def get_menu_categories_options():
     }
 
 @app.post("/api/restaurants/{restaurant_id}/menu-categories/{category_id}/items", response_model=MenuItem)
-def create_menu_item(restaurant_id: int, category_id: int, req: CreateMenuItemRequest, current_user: dict = Depends(get_current_user)):
+async def create_menu_item(
+    restaurant_id: int,
+    category_id: int,
+    current_user: dict = Depends(get_current_user),
+    name: str = Form(...),
+    price: float = Form(...),
+    description: Optional[str] = Form(None),
+    calories: Optional[int] = Form(None),
+    proteins: Optional[float] = Form(None),
+    fats: Optional[float] = Form(None),
+    carbs: Optional[float] = Form(None),
+    weight: Optional[float] = Form(None),
+    view: Optional[bool] = Form(True),
+    placenum: Optional[int] = Form(None),
+    photo: Optional[UploadFile] = File(None),
+):
     conn = sqlite3.connect("users.db")
+    conn.execute("PRAGMA foreign_keys = ON")
     c = conn.cursor()
+
     c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
     if not c.fetchone():
         conn.close()
         raise HTTPException(404, "Заведение не найдено")
+
     c.execute("SELECT id FROM menu_categories WHERE id = ? AND restaurant_id = ?", (category_id, restaurant_id))
     if not c.fetchone():
         conn.close()
         raise HTTPException(404, "Категория не найдена")
-    
-    if req.placenum is None:
+
+    if placenum is None:
         c.execute("SELECT MAX(placenum) FROM menu_items WHERE category_id = ?", (category_id,))
         max_placenum = c.fetchone()[0] or 0
-        placenum = max_placenum + 1
+        placenum_value = max_placenum + 1
     else:
-        placenum = req.placenum
-    
-    view_value = req.view if req.view is not None else True
-    c.execute('''
-        INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        category_id,
-        req.name,
-        req.price,
-        req.description,
-        req.calories,
-        req.proteins,
-        req.fats,
-        req.carbs,
-        req.weight,
-        DEFAULT_MENU_ITEM_PHOTO,
-        int(bool(view_value)),
-        placenum,
-    ))
-    item_id = c.lastrowid
-    conn.commit()
+        placenum_value = placenum
 
-    c.execute('''
+    if isinstance(view, str):
+        view_value = view.lower() in {"true", "1", "yes", "on"}
+    else:
+        view_value = True if view is None else bool(view)
+
+    photo_filename: Optional[str] = None
+    if photo is not None:
+        if not photo.content_type or not photo.content_type.startswith("image/"):
+            conn.close()
+            raise HTTPException(status_code=400, detail="Только изображения разрешены")
+        safe_name = Path(photo.filename).name
+        photo_filename = f"menu_item_{category_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{safe_name}"
+        file_path = UPLOAD_DIR / photo_filename
+        try:
+            with open(file_path, "wb") as f:
+                f.write(await photo.read())
+        except Exception as exc:
+            delete_uploaded_file(photo_filename)
+            conn.close()
+            raise HTTPException(status_code=500, detail="Не удалось сохранить фото") from exc
+
+    stored_photo = photo_filename or DEFAULT_MENU_ITEM_PHOTO
+
+    try:
+        c.execute(
+            """
+            INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                category_id,
+                name,
+                price,
+                description,
+                calories,
+                proteins,
+                fats,
+                carbs,
+                weight,
+                stored_photo,
+                int(bool(view_value)),
+                placenum_value,
+            ),
+        )
+        item_id = c.lastrowid
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        if photo_filename:
+            delete_uploaded_file(photo_filename)
+        conn.close()
+        raise HTTPException(status_code=500, detail="Не удалось создать блюдо") from exc
+
+    c.execute(
+        """
         SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
         FROM menu_items WHERE id = ?
-    ''', (item_id,))
+    """,
+        (item_id,),
+    )
     row = c.fetchone()
     conn.close()
 
     if not row:
+        if photo_filename:
+            delete_uploaded_file(photo_filename)
         raise HTTPException(500, "Не удалось создать блюдо")
 
     return format_menu_item_row(row)

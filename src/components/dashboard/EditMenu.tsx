@@ -387,57 +387,64 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         }
       } else if (editingCategory) {
         // Создание нового блюда
+        const formData = new FormData();
+        formData.append("name", itemData.name ?? "");
+        formData.append("price", String(itemData.price ?? 0));
+
+        if (itemData.description !== undefined && itemData.description !== null) {
+          formData.append("description", itemData.description);
+        }
+        if (itemData.calories !== undefined && itemData.calories !== null) {
+          formData.append("calories", String(itemData.calories));
+        }
+        if (itemData.proteins !== undefined && itemData.proteins !== null) {
+          formData.append("proteins", String(itemData.proteins));
+        }
+        if (itemData.fats !== undefined && itemData.fats !== null) {
+          formData.append("fats", String(itemData.fats));
+        }
+        if (itemData.carbs !== undefined && itemData.carbs !== null) {
+          formData.append("carbs", String(itemData.carbs));
+        }
+        if (itemData.weight !== undefined && itemData.weight !== null) {
+          formData.append("weight", String(itemData.weight));
+        }
+        if (itemData.view !== undefined && itemData.view !== null) {
+          formData.append("view", String(itemData.view));
+        }
+
+        const nextPlacenum = getItemsForCategory(editingCategory.id).length + 1;
+        formData.append("placenum", String(nextPlacenum));
+
+        if (photoFile) {
+          formData.append("photo", photoFile);
+        }
+
         const res = await fetch(
           `/api/restaurants/${activeTeam}/menu-categories/${editingCategory.id}/items`,
           {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
               Authorization: `Bearer ${localStorage.getItem("access_token")}`,
             },
-            body: JSON.stringify({
-              ...itemData,
-              placenum: getItemsForCategory(editingCategory.id).length + 1
-            }),
+            body: formData,
           }
         );
-        
+
         if (res.ok) {
           const newItem = await res.json();
-
-          const appendItem = (itemToAppend: MenuItem) => {
-            setItems((prevItems) => [
-              ...prevItems,
-              {
-                ...itemToAppend,
-                category_id: editingCategory.id
-              }
-            ]);
-          };
-
-          // Если есть фото, загружаем его после создания блюда
-          if (photoFile) {
-            await uploadItemPhoto(newItem.id, photoFile);
-            // Обновляем item с актуальным фото
-            const updatedRes = await fetch(
-              `/api/restaurants/${activeTeam}/menu-items/${newItem.id}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-                },
-              }
-            );
-            if (updatedRes.ok) {
-              const updatedItem = await updatedRes.json();
-              appendItem(updatedItem);
-            } else {
-              appendItem(newItem);
+          setItems((prevItems) => [
+            ...prevItems,
+            {
+              ...newItem,
+              category_id: editingCategory.id
             }
-          } else {
-            appendItem(newItem);
-          }
+          ]);
 
           toast.success("Блюдо добавлено");
+        } else {
+          const errorData = await res.json().catch(() => null);
+          toast.error(errorData?.detail || "Не удалось создать блюдо");
         }
       }
       
