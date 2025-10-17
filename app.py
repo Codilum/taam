@@ -504,8 +504,7 @@ def register(req: RegisterRequest):
     conn.close()
 
     html_body = get_registration_email_template(code, user_name=req.email)
-    #send_email(req.email, "Ваш код регистрации", html_body)
-    print(code)
+    send_email(req.email, "Ваш код регистрации", html_body)
     return {"message": "Код подтверждения отправлен на email"}
 
 @app.post("/api/verify")
@@ -784,7 +783,7 @@ def create_restaurant(req: CreateRestaurantRequest, current_user: dict = Depends
     restaurant_id = c.lastrowid
     conn.commit()
     conn.close()
-    return get_restaurant(restaurant_id, current_user)
+    return get_restaurant(restaurant_id)
 
 
 @app.get("/api/restaurants", response_model=list[Restaurant])
@@ -949,6 +948,28 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
     conn.commit()
     conn.close()
     return {"message": "Обновлено"}
+
+
+@app.delete("/api/restaurants/{restaurant_id}")
+def delete_restaurant(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT id FROM restaurants WHERE id = ? AND owner_email = ?",
+        (restaurant_id, current_user["email"]),
+    )
+    restaurant = c.fetchone()
+    if not restaurant:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Заведение не найдено")
+
+    c.execute(
+        "DELETE FROM restaurants WHERE id = ? AND owner_email = ?",
+        (restaurant_id, current_user["email"]),
+    )
+    conn.commit()
+    conn.close()
+    return {"message": "Заведение удалено"}
 
 @app.post("/api/restaurants/{restaurant_id}/upload-photo")
 async def upload_restaurant_photo(restaurant_id: int, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
