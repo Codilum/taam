@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import Image from "next/image"
 import { Badge } from "@/components/ui/badge"
-import { Globe, Instagram, Send, Facebook, Link2 } from "lucide-react"
+import { Instagram, Send, ShoppingCart } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -39,6 +38,10 @@ interface MenuCategory {
 
 interface CartItemDetails extends MenuItem {
   categoryName: string
+}
+
+interface CartEntry extends CartItemDetails {
+  quantity: number
 }
 
 interface RestaurantData {
@@ -183,9 +186,10 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const [loading, setLoading] = useState(true)
   const [isSticky, setIsSticky] = useState(false)
   const [searchValue, setSearchValue] = useState("")
-  const [cartItems, setCartItems] = useState<number[]>([])
+  const [cartItems, setCartItems] = useState<Record<number, number>>({})
   const [cartExpiresAt, setCartExpiresAt] = useState<number | null>(null)
   const [timeLeft, setTimeLeft] = useState<number | null>(null)
+  const [isCartOpen, setIsCartOpen] = useState(false)
 
   const cartKey = `taam_cart_${activeTeam}`
   const normalizedSearch = searchValue.trim().toLowerCase()
@@ -203,7 +207,19 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     )
   }
 
-  const updateCartStorage = (items: number[]) => {
+  const normalizeCart = (items: Record<number, number>) => {
+    const normalized: Record<number, number> = {}
+    Object.entries(items).forEach(([key, value]) => {
+      const id = Number(key)
+      const qty = Number(value)
+      if (!Number.isNaN(id) && qty > 0) {
+        normalized[id] = Math.floor(qty)
+      }
+    })
+    return normalized
+  }
+
+  const saveCart = (items: Record<number, number>) => {
     if (typeof window === "undefined") return
 
     if (!activeTeam) {
@@ -212,7 +228,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       return
     }
 
-    if (items.length === 0) {
+    const clean = normalizeCart(items)
+
+    if (Object.keys(clean).length === 0) {
       localStorage.removeItem(cartKey)
       setCartExpiresAt(null)
       return
@@ -220,35 +238,47 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
     const expiresAt = Date.now() + 30 * 60 * 1000
     setCartExpiresAt(expiresAt)
-    localStorage.setItem(cartKey, JSON.stringify({ items, expiresAt }))
+    localStorage.setItem(cartKey, JSON.stringify({ items: clean, expiresAt }))
   }
 
-  const toggleCartItem = (itemId: number) => {
+  const updateCart = (updater: (prev: Record<number, number>) => Record<number, number>) => {
     setCartItems((prev) => {
-      let updated: number[]
-      if (prev.includes(itemId)) {
-        updated = prev.filter((id) => id !== itemId)
-      } else {
-        updated = [...prev, itemId]
-      }
-      updateCartStorage(updated)
+      const updated = normalizeCart(updater(prev))
+      saveCart(updated)
       return updated
+    })
+  }
+
+  const addToCart = (itemId: number, count = 1) => {
+    updateCart((prev) => ({
+      ...prev,
+      [itemId]: (prev[itemId] || 0) + count,
+    }))
+  }
+
+  const decreaseCartItem = (itemId: number) => {
+    updateCart((prev) => {
+      const next = { ...prev }
+      if (next[itemId]) {
+        next[itemId] = next[itemId] - 1
+        if (next[itemId] <= 0) {
+          delete next[itemId]
+        }
+      }
+      return next
     })
   }
 
   const removeFromCart = (itemId: number) => {
-    setCartItems((prev) => {
-      const updated = prev.filter((id) => id !== itemId)
-      updateCartStorage(updated)
-      return updated
+    updateCart((prev) => {
+      const next = { ...prev }
+      delete next[itemId]
+      return next
     })
   }
 
   const clearCart = () => {
-    setCartItems(() => {
-      updateCartStorage([])
-      return []
-    })
+    updateCart(() => ({}))
   }
 
   const findMenuItemById = (id: number): CartItemDetails | null => {
@@ -324,7 +354,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   useEffect(() => {
     if (!activeTeam) {
-      setCartItems([])
+      setCartItems({})
       setCartExpiresAt(null)
       return
     }
@@ -333,29 +363,49 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
     const saved = localStorage.getItem(cartKey)
     if (!saved) {
-      setCartItems([])
+      setCartItems({})
       setCartExpiresAt(null)
       return
     }
 
     try {
-      const parsed = JSON.parse(saved) as { items?: unknown[]; expiresAt?: number }
-      if (
-        parsed.expiresAt &&
-        parsed.expiresAt > Date.now() &&
-        Array.isArray(parsed.items)
-      ) {
-        const items = parsed.items.filter((id): id is number => typeof id === "number")
-        setCartItems(items)
-        setCartExpiresAt(parsed.expiresAt)
+      const parsed = JSON.parse(saved) as { items?: unknown; expiresAt?: number }
+      if (parsed.expiresAt && parsed.expiresAt > Date.now()) {
+        let restored: Record<number, number> = {}
+        if (Array.isArray(parsed.items)) {
+          parsed.items.forEach((id) => {
+            if (typeof id === "number") {
+              restored[id] = (restored[id] || 0) + 1
+            }
+          })
+        } else if (parsed.items && typeof parsed.items === "object") {
+          Object.entries(parsed.items as Record<string, unknown>).forEach(([key, value]) => {
+            const id = Number(key)
+            const qty = Number(value)
+            if (!Number.isNaN(id) && qty > 0) {
+              restored[id] = Math.floor(qty)
+            }
+          })
+        }
+
+        restored = normalizeCart(restored)
+
+        if (Object.keys(restored).length > 0) {
+          setCartItems(restored)
+          setCartExpiresAt(parsed.expiresAt)
+        } else {
+          localStorage.removeItem(cartKey)
+          setCartItems({})
+          setCartExpiresAt(null)
+        }
       } else {
         localStorage.removeItem(cartKey)
-        setCartItems([])
+        setCartItems({})
         setCartExpiresAt(null)
       }
     } catch {
       localStorage.removeItem(cartKey)
-      setCartItems([])
+      setCartItems({})
       setCartExpiresAt(null)
     }
   }, [cartKey, activeTeam])
@@ -364,18 +414,27 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     if (!data) return
 
     setCartItems((prev) => {
-      if (prev.length === 0) return prev
+      const keys = Object.keys(prev)
+      if (keys.length === 0) return prev
 
       const available = new Set<number>()
       data.menu.forEach((cat) => {
         cat.items.forEach((item) => available.add(item.id))
       })
 
-      const filtered = prev.filter((id) => available.has(id))
-      if (filtered.length === prev.length) return prev
+      const filtered: Record<number, number> = {}
+      keys.forEach((key) => {
+        const id = Number(key)
+        if (available.has(id)) {
+          filtered[id] = prev[id]
+        }
+      })
 
-      updateCartStorage(filtered)
-      return filtered
+      const normalized = normalizeCart(filtered)
+      if (Object.keys(normalized).length === keys.length) return prev
+
+      saveCart(normalized)
+      return normalized
     })
   }, [data])
 
@@ -434,6 +493,13 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       setActiveCat(visible[0].id)
     }
   }, [data, normalizedSearch, activeCat])
+
+  useEffect(() => {
+    const count = Object.values(cartItems).reduce((sum, qty) => sum + qty, 0)
+    if (count === 0 && isCartOpen) {
+      setIsCartOpen(false)
+    }
+  }, [cartItems, isCartOpen])
 
   // IntersectionObserver для sticky header
   useEffect(() => {
@@ -595,7 +661,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
     const now = Date.now()
     if (cartExpiresAt <= now) {
-      setCartItems([])
+      setCartItems({})
       setCartExpiresAt(null)
       if (typeof window !== "undefined") {
         localStorage.removeItem(cartKey)
@@ -604,7 +670,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     }
 
     const timeout = setTimeout(() => {
-      setCartItems([])
+      setCartItems({})
       setCartExpiresAt(null)
       if (typeof window !== "undefined") {
         localStorage.removeItem(cartKey)
@@ -684,11 +750,17 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId)
   const categoriesForNav = getVisibleCategories()
-  const cartDetails = cartItems
-    .map((id) => findMenuItemById(id))
-    .filter((item): item is CartItemDetails => item !== null)
-  const totalPrice = cartDetails.reduce((sum, item) => sum + item.price, 0)
-  const selectedItemInCart = selectedItem ? cartItems.includes(selectedItem.id) : false
+  const cartDetails: CartEntry[] = Object.entries(cartItems)
+    .map(([key, value]) => {
+      const id = Number(key)
+      const details = findMenuItemById(id)
+      if (!details) return null
+      return { ...details, quantity: Number(value) }
+    })
+    .filter((item): item is CartEntry => !!item && item.quantity > 0)
+  const totalPrice = cartDetails.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  const cartCount = cartDetails.reduce((sum, item) => sum + item.quantity, 0)
+  const selectedItemQuantity = selectedItem ? cartItems[selectedItem.id] || 0 : 0
   const timeLeftText =
     timeLeft !== null
       ? timeLeft <= 1
@@ -1001,7 +1073,8 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     {itemsToShow.length > 0 ? (
                       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
                         {itemsToShow.map((item, index) => {
-                          const inCart = cartItems.includes(item.id)
+                          const quantity = cartItems[item.id] || 0
+                          const inCart = quantity > 0
                           return (
                             <div
                               key={item.id}
@@ -1044,19 +1117,42 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                                   {item.price} ₽
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    toggleCartItem(item.id)
-                                  }}
-                                  className={cn(
-                                    "w-full text-xs font-medium mt-2 py-1 rounded-lg",
-                                    inCart ? "bg-black text-white" : "bg-[#FFEB5A] text-black"
-                                  )}
-                                >
-                                  {inCart ? "Убрать" : "В корзину"}
-                                </button>
+                                {inCart ? (
+                                  <div className="flex items-center justify-between gap-2 mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        decreaseCartItem(item.id)
+                                      }}
+                                      className="w-8 h-7 flex items-center justify-center rounded-lg bg-[#D9D9D9] text-base"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="text-sm font-semibold">{quantity}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        addToCart(item.id)
+                                      }}
+                                      className="flex-1 h-7 rounded-lg bg-[#FFEB5A] text-black text-xs font-semibold"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      addToCart(item.id)
+                                    }}
+                                    className="w-full text-xs font-medium mt-2 py-1 rounded-lg bg-[#FFEB5A] text-black"
+                                  >
+                                    В корзину
+                                  </button>
+                                )}
                               </div>
                             </div>
                           )
@@ -1075,63 +1171,98 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       </div>
     </div>
 
-      {cartDetails.length > 0 && (
-        <div className="px-4 md:px-0 mt-4">
-          <div className="bg-white md:max-w-6xl mx-auto rounded-2xl p-4 space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-lg font-semibold">Корзина</p>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 text-right">{timeLeftText}</span>
+      {cartCount > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setIsCartOpen(true)}
+            className="fixed top-5 right-4 z-40 w-14 h-14 rounded-full bg-black text-white flex items-center justify-center shadow-lg relative"
+          >
+            <ShoppingCart className="w-6 h-6" />
+            <span className="absolute -top-1 -right-1 bg-[#FFEB5A] text-black text-xs font-semibold px-2 py-0.5 rounded-full">
+              {cartCount}
+            </span>
+          </button>
+
+          <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
+            <DialogContent className="w-[92vw] max-w-[420px] p-4 sm:p-5 space-y-4 rounded-3xl">
+              <DialogTitle className="text-lg font-semibold">Мой список</DialogTitle>
+              <p className="text-xs text-gray-500">{timeLeftText}</p>
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                {cartDetails.map((item) => (
+                  <div
+                    key={item.id}
+                    className="border border-gray-100 rounded-xl p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{item.name}</p>
+                        <p className="text-xs text-gray-500 truncate">{item.categoryName}</p>
+                      </div>
+                      <span className="text-sm font-semibold whitespace-nowrap">
+                        {item.price * item.quantity} ₽
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => decreaseCartItem(item.id)}
+                          className="w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
+                        >
+                          −
+                        </button>
+                        <span className="text-sm font-semibold w-6 text-center">{item.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => addToCart(item.id)}
+                          className="w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeFromCart(item.id)}
+                        className="text-xs text-red-500"
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                <span className="text-sm text-gray-600">Итого</span>
+                <span className="text-lg font-semibold">{totalPrice} ₽</span>
+              </div>
+              <div className="flex justify-end">
                 <button
                   type="button"
-                  onClick={clearCart}
-                  className="text-xs text-gray-500 hover:text-gray-700"
+                  onClick={() => {
+                    clearCart()
+                    setIsCartOpen(false)
+                  }}
+                  className="text-xs text-gray-500"
                 >
-                  Очистить
+                  Очистить список
                 </button>
               </div>
-            </div>
-            <div className="space-y-3">
-              {cartDetails.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{item.name}</p>
-                    <p className="text-xs text-gray-500 truncate">{item.categoryName}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold whitespace-nowrap">{item.price} ₽</span>
-                    <button
-                      type="button"
-                      onClick={() => removeFromCart(item.id)}
-                      className="text-xs text-red-500 hover:text-red-600"
-                    >
-                      Удалить
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-              <span className="text-sm text-gray-600">Итого</span>
-              <span className="text-lg font-semibold">{totalPrice} ₽</span>
-            </div>
-          </div>
-        </div>
+            </DialogContent>
+          </Dialog>
+        </>
       )}
 
       {/* Popup для блюда */}
       <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
-        <DialogContent className="[&>button]:rounded-full [&>button]:p-2 [&>button]:bg-[#D9D9D9] max-w-md">
+        <DialogContent className="[&>button]:rounded-full [&>button]:p-2 [&>button]:bg-[#D9D9D9] w-[92vw] max-w-[440px] p-0 overflow-hidden rounded-3xl">
           <VisuallyHidden>
             <DialogTitle>{selectedItem?.name}</DialogTitle>
           </VisuallyHidden>
-          
+
           {/* Photo + Badges */}
           {selectedItem?.photo && (
-            <div className="relative w-full h-60">
+            <div className="relative w-full h-[220px] sm:h-[260px]">
               <img
                 src={selectedItem.photo}
                 alt={selectedItem.name}
@@ -1149,32 +1280,16 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
           )}
           
           {/* Content */}
-          <div className="p-4 space-y-4">
+          <div className="p-4 sm:p-5 space-y-4">
             {/* Name */}
             <h2 className="text-center text-xl font-normal text-[#222222]">
               {selectedItem?.name}
             </h2>
-            
+
             {/* Description */}
             <p className="text-sm text-gray-600 break-words">
               {selectedItem?.description || "Нет описания"}
             </p>
-
-            <Button
-              onClick={() => {
-                if (selectedItem) {
-                  toggleCartItem(selectedItem.id)
-                }
-              }}
-              className={cn(
-                "w-full h-10 rounded-lg text-sm font-medium",
-                selectedItemInCart
-                  ? "bg-black text-white hover:bg-black/90"
-                  : "bg-[#FFEB5A] text-black hover:bg-[#e6d84d]"
-              )}
-            >
-              {selectedItemInCart ? "Убрать из корзины" : "Добавить в корзину"}
-            </Button>
 
             {/* KBJU + Weight */}
             <div className="flex justify-between items-center text-xs text-gray-600 pt-2">
@@ -1211,31 +1326,61 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 </div>
               )}
             </div>
-            
-            {/* Navigation */}
-            <div className="flex justify-between mt-6">
-              <Button
-                onClick={handlePrevItem}
-                disabled={isFirstItem()}
-                className={`w-32 h-12 p-0 flex items-center justify-center rounded-[8px] ${
-                  isFirstItem()
-                    ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
-                    : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
-                }`}
-              >
-                <ArrowLeftIcon />
-              </Button>
-              <Button
-                onClick={handleNextItem}
-                disabled={isLastItem()}
-                className={`w-32 h-12 p-0 flex items-center justify-center rounded-[8px] ${
-                  isLastItem()
-                    ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
-                    : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
-                }`}
-              >
-                <ArrowRightIcon />
-              </Button>
+
+            {/* Управление */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-6">
+              <div className="flex items-center gap-2 sm:gap-3 justify-between sm:justify-start w-full sm:w-auto">
+                <Button
+                  onClick={handlePrevItem}
+                  disabled={isFirstItem()}
+                  className={`w-24 h-11 p-0 flex items-center justify-center rounded-[8px] ${
+                    isFirstItem()
+                      ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
+                      : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
+                  }`}
+                >
+                  <ArrowLeftIcon />
+                </Button>
+                <Button
+                  onClick={handleNextItem}
+                  disabled={isLastItem()}
+                  className={`w-24 h-11 p-0 flex items-center justify-center rounded-[8px] ${
+                    isLastItem()
+                      ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
+                      : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
+                  }`}
+                >
+                  <ArrowRightIcon />
+                </Button>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3 justify-end w-full sm:w-auto">
+                {selectedItem && selectedItemQuantity > 0 ? (
+                  <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => decreaseCartItem(selectedItem.id)}
+                      className="w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
+                    >
+                      −
+                    </button>
+                    <span className="text-sm font-semibold w-6 text-center">{selectedItemQuantity}</span>
+                    <button
+                      type="button"
+                      onClick={() => addToCart(selectedItem.id)}
+                      className="w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
+                    >
+                      +
+                    </button>
+                  </div>
+                ) : selectedItem ? (
+                  <Button
+                    onClick={() => addToCart(selectedItem.id)}
+                    className="h-11 px-6 rounded-lg bg-[#FFEB5A] text-black text-sm font-semibold"
+                  >
+                    Добавить в список
+                  </Button>
+                ) : null}
+              </div>
             </div>
           </div>
         </DialogContent>
