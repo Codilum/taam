@@ -1236,7 +1236,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                                   </span>
                                   {item.weight && item.weight !== 0.0 && (
                                     <span className="text-gray-500 text-xs whitespace-nowrap">
-                                      {item.weight} г
+                                      {item.weight} гр
                                     </span>
                                   )}
                                 </div>
@@ -1321,7 +1321,16 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               </DialogTitle>
               <div className="flex items-center justify-between text-xs text-gray-500">
                 <span>Позиций: {uniqueItemCount}</span>
-                {timeLeftText && <span>{timeLeftText}</span>}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearCart();
+                    setIsCartOpen(false);
+                  }}
+                  className="text-xs text-gray-500"
+                >
+                  Очистить список
+                </button>
               </div>
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-0">
                 {cartDetails.map((item) => (
@@ -1376,18 +1385,6 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               <div className="flex items-center justify-between pt-3 border-t border-gray-100">
                 <span className="text-sm text-gray-600">Итого</span>
                 <span className="text-lg font-semibold">{totalPrice} ₽</span>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearCart();
-                    setIsCartOpen(false);
-                  }}
-                  className="text-xs text-gray-500"
-                >
-                  Очистить список
-                </button>
               </div>
             </DialogContent>
           </Dialog>
