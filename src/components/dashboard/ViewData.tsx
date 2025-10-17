@@ -6,9 +6,9 @@ import { Badge } from "@/components/ui/badge"
 import { Globe, Instagram, Send, Facebook, Link2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircleIcon } from "lucide-react"
@@ -35,6 +35,10 @@ interface MenuCategory {
   description: string | null
   placenum: number
   items: MenuItem[]
+}
+
+interface CartItemDetails extends MenuItem {
+  categoryName: string
 }
 
 interface RestaurantData {
@@ -178,11 +182,85 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const [currentCategoryId, setCurrentCategoryId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [isSticky, setIsSticky] = useState(false)
+  const [searchValue, setSearchValue] = useState("")
+  const [cartItems, setCartItems] = useState<number[]>([])
+  const [cartExpiresAt, setCartExpiresAt] = useState<number | null>(null)
+  const [timeLeft, setTimeLeft] = useState<number | null>(null)
+
+  const cartKey = `taam_cart_${activeTeam}`
+  const normalizedSearch = searchValue.trim().toLowerCase()
 
   // refs для секций категорий
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const menuHeaderRef = useRef<HTMLDivElement>(null)
   const categoriesContainerRef = useRef<HTMLDivElement>(null)
+
+  const getVisibleCategories = () => {
+    if (!data || !data.menu) return []
+    if (!normalizedSearch) return data.menu
+    return data.menu.filter((cat) =>
+      cat.items.some((item) => item.name.toLowerCase().includes(normalizedSearch))
+    )
+  }
+
+  const updateCartStorage = (items: number[]) => {
+    if (typeof window === "undefined") return
+
+    if (!activeTeam) {
+      setCartExpiresAt(null)
+      localStorage.removeItem(cartKey)
+      return
+    }
+
+    if (items.length === 0) {
+      localStorage.removeItem(cartKey)
+      setCartExpiresAt(null)
+      return
+    }
+
+    const expiresAt = Date.now() + 30 * 60 * 1000
+    setCartExpiresAt(expiresAt)
+    localStorage.setItem(cartKey, JSON.stringify({ items, expiresAt }))
+  }
+
+  const toggleCartItem = (itemId: number) => {
+    setCartItems((prev) => {
+      let updated: number[]
+      if (prev.includes(itemId)) {
+        updated = prev.filter((id) => id !== itemId)
+      } else {
+        updated = [...prev, itemId]
+      }
+      updateCartStorage(updated)
+      return updated
+    })
+  }
+
+  const removeFromCart = (itemId: number) => {
+    setCartItems((prev) => {
+      const updated = prev.filter((id) => id !== itemId)
+      updateCartStorage(updated)
+      return updated
+    })
+  }
+
+  const clearCart = () => {
+    setCartItems(() => {
+      updateCartStorage([])
+      return []
+    })
+  }
+
+  const findMenuItemById = (id: number): CartItemDetails | null => {
+    if (!data) return null
+    for (const cat of data.menu) {
+      const found = cat.items.find((item) => item.id === id)
+      if (found) {
+        return { ...found, categoryName: cat.name }
+      }
+    }
+    return null
+  }
 
   useEffect(() => {
     const fetchData = async () => {
@@ -210,6 +288,8 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
             }))
             .sort((a: MenuCategory, b: MenuCategory) => a.placenum - b.placenum)
         }
+
+        categoryRefs.current = {}
 
         setData({
           photo: restaurantData.photo,
@@ -242,37 +322,118 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     fetchData()
   }, [activeTeam])
 
+  useEffect(() => {
+    if (!activeTeam) {
+      setCartItems([])
+      setCartExpiresAt(null)
+      return
+    }
+
+    if (typeof window === "undefined") return
+
+    const saved = localStorage.getItem(cartKey)
+    if (!saved) {
+      setCartItems([])
+      setCartExpiresAt(null)
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(saved) as { items?: unknown[]; expiresAt?: number }
+      if (
+        parsed.expiresAt &&
+        parsed.expiresAt > Date.now() &&
+        Array.isArray(parsed.items)
+      ) {
+        const items = parsed.items.filter((id): id is number => typeof id === "number")
+        setCartItems(items)
+        setCartExpiresAt(parsed.expiresAt)
+      } else {
+        localStorage.removeItem(cartKey)
+        setCartItems([])
+        setCartExpiresAt(null)
+      }
+    } catch {
+      localStorage.removeItem(cartKey)
+      setCartItems([])
+      setCartExpiresAt(null)
+    }
+  }, [cartKey, activeTeam])
+
+  useEffect(() => {
+    if (!data) return
+
+    setCartItems((prev) => {
+      if (prev.length === 0) return prev
+
+      const available = new Set<number>()
+      data.menu.forEach((cat) => {
+        cat.items.forEach((item) => available.add(item.id))
+      })
+
+      const filtered = prev.filter((id) => available.has(id))
+      if (filtered.length === prev.length) return prev
+
+      updateCartStorage(filtered)
+      return filtered
+    })
+  }, [data])
+
   // IntersectionObserver: подсветка категории при скролле
   useEffect(() => {
-    if (!data || !data.menu || data.menu.length === 0) return;
+    if (!data || !data.menu || data.menu.length === 0) return
+
+    const visibleCategories = getVisibleCategories()
+    if (visibleCategories.length === 0) return
 
     const observer = new IntersectionObserver(
       (entries) => {
-        entries.forEach(entry => {
+        entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            const idAttr = entry.target.getAttribute("data-id");
+            const idAttr = entry.target.getAttribute("data-id")
             if (idAttr) {
-              const categoryId = Number(idAttr);
-              setActiveCat(categoryId);
-              scrollCategoryIntoView(categoryId);
+              const categoryId = Number(idAttr)
+              setActiveCat(categoryId)
+              scrollCategoryIntoView(categoryId)
             }
           }
-        });
+        })
       },
       {
         root: null,
         rootMargin: "-20% 0px -70% 0px",
         threshold: 0.1,
       }
-    );
+    )
 
-    data.menu.forEach((cat) => {
-      const el = categoryRefs.current[cat.id];
-      if (el) observer.observe(el);
-    });
+    visibleCategories.forEach((cat) => {
+      const el = categoryRefs.current[cat.id]
+      if (el) observer.observe(el)
+    })
 
-    return () => observer.disconnect();
-  }, [data]);
+    return () => observer.disconnect()
+  }, [data, normalizedSearch])
+
+  useEffect(() => {
+    if (!data || !data.menu || data.menu.length === 0) {
+      if (activeCat !== null) {
+        setActiveCat(null)
+      }
+      return
+    }
+
+    const visible = getVisibleCategories()
+    if (visible.length === 0) {
+      if (activeCat !== null) {
+        setActiveCat(null)
+      }
+      return
+    }
+
+    if (!activeCat || !visible.some((cat) => cat.id === activeCat)) {
+      setActiveCat(visible[0].id)
+    }
+  }, [data, normalizedSearch, activeCat])
 
   // IntersectionObserver для sticky header
   useEffect(() => {
@@ -296,29 +457,29 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   // Функция для прокрутки категории в видимую область
   const scrollCategoryIntoView = (categoryId: number) => {
-    if (!categoriesContainerRef.current) return;
-    
-    const categoryIndex = data?.menu.findIndex(cat => cat.id === categoryId) ?? -1;
-    if (categoryIndex === -1) return;
-    
-    const container = categoriesContainerRef.current;
-    const categoryButtons = container.querySelectorAll('button');
-    
+    if (!categoriesContainerRef.current) return
+
+    const visibleCategories = getVisibleCategories()
+    const categoryIndex = visibleCategories.findIndex((cat) => cat.id === categoryId)
+    if (categoryIndex === -1) return
+
+    const container = categoriesContainerRef.current
+    const categoryButtons = container.querySelectorAll("button")
+
     if (categoryButtons[categoryIndex]) {
-      const button = categoryButtons[categoryIndex];
-      const containerRect = container.getBoundingClientRect();
-      const buttonRect = button.getBoundingClientRect();
-      
-      // Прокручиваем только если кнопка не полностью видна
+      const button = categoryButtons[categoryIndex]
+      const containerRect = container.getBoundingClientRect()
+      const buttonRect = button.getBoundingClientRect()
+
       if (buttonRect.left < containerRect.left || buttonRect.right > containerRect.right) {
         button.scrollIntoView({
-          behavior: 'smooth',
-          inline: 'center',
-          block: 'nearest'
-        });
+          behavior: "smooth",
+          inline: "center",
+          block: "nearest",
+        })
       }
     }
-  };
+  }
 
   const handleItemClick = (item: MenuItem, index: number, categoryId: number) => {
     setSelectedItem(item)
@@ -396,16 +557,62 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   // Функция для проверки, является ли элемент первым
   const isFirstItem = () => {
     if (!data || currentItemIndex === -1 || currentCategoryId === null) return true
-    
+
     const catIndex = data.menu.findIndex((cat) => cat.id === currentCategoryId)
     if (catIndex === -1) return true
-    
+
     const currentCat = data.menu[catIndex]
     const isFirstInCategory = currentItemIndex === 0
     const isFirstCategory = catIndex === 0
-    
+
     return isFirstInCategory && isFirstCategory
   }
+
+  useEffect(() => {
+    if (!cartExpiresAt) {
+      setTimeLeft(null)
+      return
+    }
+
+    const update = () => {
+      const diff = cartExpiresAt - Date.now()
+      if (diff <= 0) {
+        setTimeLeft(0)
+      } else {
+        setTimeLeft(Math.ceil(diff / 60000))
+      }
+    }
+
+    update()
+
+    const interval = setInterval(update, 30000)
+
+    return () => clearInterval(interval)
+  }, [cartExpiresAt])
+
+  useEffect(() => {
+    if (!cartExpiresAt) return
+
+    const now = Date.now()
+    if (cartExpiresAt <= now) {
+      setCartItems([])
+      setCartExpiresAt(null)
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(cartKey)
+      }
+      return
+    }
+
+    const timeout = setTimeout(() => {
+      setCartItems([])
+      setCartExpiresAt(null)
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(cartKey)
+      }
+    }, cartExpiresAt - now)
+
+    return () => clearTimeout(timeout)
+  }, [cartExpiresAt, cartKey])
 
   if (loading || !data) {
     return (
@@ -476,6 +683,18 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId)
+  const categoriesForNav = getVisibleCategories()
+  const cartDetails = cartItems
+    .map((id) => findMenuItemById(id))
+    .filter((item): item is CartItemDetails => item !== null)
+  const totalPrice = cartDetails.reduce((sum, item) => sum + item.price, 0)
+  const selectedItemInCart = selectedItem ? cartItems.includes(selectedItem.id) : false
+  const timeLeftText =
+    timeLeft !== null
+      ? timeLeft <= 1
+        ? "Менее минуты до очистки"
+        : `Список сохранится примерно ${timeLeft} мин.`
+      : "Список сохраняется 30 минут после изменения."
 
   return (
     <div className="bg-gray-100 min-h-screen">
@@ -710,96 +929,198 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               boxShadow: isSticky ? '0 2px 10px rgba(0,0,0,0.1)' : 'none'
             }}
           >
-            <div className="px-4 pt-4 pb-3">
-              <div className="flex items-center justify-between mb-2">
+            <div className="px-4 pt-4 pb-3 space-y-3">
+              <div className="flex items-center justify-between">
                 <p className="text-xl font-bold">
                   {isSticky ? data.name : "Меню"}
                 </p>
-                <img 
-                  src="https://taam.menu/menu.gif" 
-                  alt="menu gif" 
-                  className="w-6 h-6 md:hidden" 
+                <img
+                  src="https://taam.menu/menu.gif"
+                  alt="menu gif"
+                  className="w-6 h-6 md:hidden"
                 />
               </div>
-              <div 
-                ref={categoriesContainerRef}
-                className="flex gap-3 overflow-x-auto scrollbar-hide"
-              >
-                {data.menu.map((cat) => (
-                  <button
-                    key={cat.id}
-                    onClick={() => {
-                      setActiveCat(cat.id)
-                      categoryRefs.current[cat.id]?.scrollIntoView({ behavior: "smooth", block: "start" })
-                      scrollCategoryIntoView(cat.id)
-                    }}
-                    className={cn(
-                      "px-3 py-1 rounded-lg text-sm whitespace-nowrap transition-colors flex-shrink-0",
-                      activeCat === cat.id ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"
-                    )}
-                  >
-                    {cat.name}
-                  </button>
-                ))}
-              </div>
+              <Input
+                value={searchValue}
+                onChange={(e) => setSearchValue(e.target.value)}
+                placeholder="Поиск по блюдам"
+                className="bg-gray-100 border-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
+              {categoriesForNav.length > 0 ? (
+                <div
+                  ref={categoriesContainerRef}
+                  className="flex gap-3 overflow-x-auto scrollbar-hide"
+                >
+                  {categoriesForNav.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => {
+                        setActiveCat(cat.id)
+                        categoryRefs.current[cat.id]?.scrollIntoView({ behavior: "smooth", block: "start" })
+                        scrollCategoryIntoView(cat.id)
+                      }}
+                      className={cn(
+                        "px-3 py-1 rounded-lg text-sm whitespace-nowrap transition-colors flex-shrink-0",
+                        activeCat === cat.id ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"
+                      )}
+                    >
+                      {cat.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-500">Категории не найдены</div>
+              )}
             </div>
           </div>
 
           <div className="p-4 space-y-6">
-            {data.menu.map((cat) => (
-              <div
-                key={cat.id}
-                id={`cat-${cat.id}`}
-                data-id={cat.id}
-                ref={(el) => { categoryRefs.current[cat.id] = el } }
-                className="scroll-mt-24"
-              >
-                <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
-                  {cat.items.map((item, index) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden"
-                      onClick={() => handleItemClick(item, index, cat.id)}
-                    >
-                      {item.photo ? (
-                        <div className="w-full aspect-square overflow-hidden">
-                          <img
-                            src={item.photo}
-                            alt={item.name}
-                            className="w-full h-full object-cover rounded-t-xl"
-                          />
-                        </div>
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-200 rounded-t-xl" />
-                      )}
-                      
-                      <div className="p-2 space-y-1">
-                        {/* Name and Weight */}
-                        <div className="flex justify-between items-start">
-                          <span className="font-medium text-sm break-words flex-1 pr-2">
-                            {item.name}
-                          </span>
-                          {item.weight && item.weight !== 0.0 && (
-                            <span className="text-gray-500 text-xs whitespace-nowrap">
-                              {item.weight} г
-                            </span>
-                          )}
-                        </div>
-                        
-                        {/* Price */}
-                        <div className="text-black font-semibold text-sm">
-                          {item.price} ₽
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            {normalizedSearch && categoriesForNav.length === 0 ? (
+              <div className="text-center text-sm text-gray-500 py-10 border border-dashed border-gray-300 rounded-xl">
+                Ничего не найдено, попробуйте изменить запрос
               </div>
-            ))}
-          </div>
+            ) : (
+              categoriesForNav.map((cat) => {
+                const itemsToShow = normalizedSearch
+                  ? cat.items.filter((item) =>
+                      item.name.toLowerCase().includes(normalizedSearch)
+                    )
+                  : cat.items
+
+                return (
+                  <div
+                    key={cat.id}
+                    id={`cat-${cat.id}`}
+                    data-id={cat.id}
+                    ref={(el) => {
+                      categoryRefs.current[cat.id] = el
+                    }}
+                    className="scroll-mt-24"
+                  >
+                    <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
+                    {itemsToShow.length > 0 ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
+                        {itemsToShow.map((item, index) => {
+                          const inCart = cartItems.includes(item.id)
+                          return (
+                            <div
+                              key={item.id}
+                              className={cn(
+                                "relative rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden",
+                                inCart ? "border border-black" : ""
+                              )}
+                              onClick={() => handleItemClick(item, index, cat.id)}
+                            >
+                              {inCart && (
+                                <span className="absolute top-2 right-2 bg-black text-white text-[10px] px-2 py-1 rounded-full">
+                                  В корзине
+                                </span>
+                              )}
+                              {item.photo ? (
+                                <div className="w-full aspect-square overflow-hidden">
+                                  <img
+                                    src={item.photo}
+                                    alt={item.name}
+                                    className="w-full h-full object-cover rounded-t-xl"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="w-full aspect-square bg-gray-200 rounded-t-xl" />
+                              )}
+
+                              <div className="p-2 space-y-1">
+                                <div className="flex justify-between items-start">
+                                  <span className="font-medium text-sm break-words flex-1 pr-2">
+                                    {item.name}
+                                  </span>
+                                  {item.weight && item.weight !== 0.0 && (
+                                    <span className="text-gray-500 text-xs whitespace-nowrap">
+                                      {item.weight} г
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="text-black font-semibold text-sm">
+                                  {item.price} ₽
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    toggleCartItem(item.id)
+                                  }}
+                                  className={cn(
+                                    "w-full text-xs font-medium mt-2 py-1 rounded-lg",
+                                    inCart ? "bg-black text-white" : "bg-[#FFEB5A] text-black"
+                                  )}
+                                >
+                                  {inCart ? "Убрать" : "В корзину"}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500 border border-dashed border-gray-300 rounded-xl p-6">
+                        В этой категории нет блюд по запросу
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+            )}
         </div>
       </div>
+    </div>
+
+      {cartDetails.length > 0 && (
+        <div className="px-4 md:px-0 mt-4">
+          <div className="bg-white md:max-w-6xl mx-auto rounded-2xl p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-lg font-semibold">Корзина</p>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 text-right">{timeLeftText}</span>
+                <button
+                  type="button"
+                  onClick={clearCart}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Очистить
+                </button>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {cartDetails.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 border border-gray-100 rounded-xl px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{item.name}</p>
+                    <p className="text-xs text-gray-500 truncate">{item.categoryName}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-semibold whitespace-nowrap">{item.price} ₽</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(item.id)}
+                      className="text-xs text-red-500 hover:text-red-600"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+              <span className="text-sm text-gray-600">Итого</span>
+              <span className="text-lg font-semibold">{totalPrice} ₽</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Popup для блюда */}
       <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
@@ -838,7 +1159,23 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
             <p className="text-sm text-gray-600 break-words">
               {selectedItem?.description || "Нет описания"}
             </p>
-            
+
+            <Button
+              onClick={() => {
+                if (selectedItem) {
+                  toggleCartItem(selectedItem.id)
+                }
+              }}
+              className={cn(
+                "w-full h-10 rounded-lg text-sm font-medium",
+                selectedItemInCart
+                  ? "bg-black text-white hover:bg-black/90"
+                  : "bg-[#FFEB5A] text-black hover:bg-[#e6d84d]"
+              )}
+            >
+              {selectedItemInCart ? "Убрать из корзины" : "Добавить в корзину"}
+            </Button>
+
             {/* KBJU + Weight */}
             <div className="flex justify-between items-center text-xs text-gray-600 pt-2">
               <div className="flex gap-4 text-center">
