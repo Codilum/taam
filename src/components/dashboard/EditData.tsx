@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Card,
   CardContent,
   CardFooter,
   CardHeader,
   CardTitle,
+  CardDescription,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,7 +15,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X } from "lucide-react";
 import { toast } from "sonner";
-import Image from "next/image";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface WorkingHours {
   startDay: string;
@@ -49,6 +61,8 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
   const [workingHours, setWorkingHours] = useState<WorkingHours[]>([
     { startDay: "Пн", endDay: "Пн", open: "09:00", close: "18:00", breakStart: "", breakEnd: "" },
   ]);
+  const [deleting, setDeleting] = useState(false);
+  const router = useRouter();
 
   const predefinedFeatureOptions = [
     "Место для молитвы",
@@ -246,9 +260,46 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
   };
 
   const clearBreak = (index: number) => {
-    setWorkingHours(prev => prev.map((item, i) => 
+    setWorkingHours(prev => prev.map((item, i) =>
       i === index ? { ...item, breakStart: "", breakEnd: "" } : item
     ));
+  };
+
+  const handleDeleteRestaurant = async () => {
+    if (!activeTeam) {
+      toast.error("Заведение не выбрано");
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      const token = localStorage.getItem("access_token");
+      if (!token) {
+        throw new Error("No token");
+      }
+
+      const res = await fetch(`/api/restaurants/${activeTeam}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to delete restaurant");
+      }
+
+      toast.success("Заведение удалено");
+      if (typeof window !== "undefined") {
+        window.location.href = "/dashboard";
+      } else {
+        router.replace("/dashboard");
+        router.refresh();
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error("Не удалось удалить заведение");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   if (loading || !data) {
@@ -624,6 +675,46 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
           <Button onClick={handleSave} className="w-full sm:w-auto" style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}>
             Сохранить изменения
           </Button>
+        </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Опасная зона</CardTitle>
+          <CardDescription>Удаление заведения необратимо, стоимость активной подписки не возвращается.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <p className="font-medium">Удаление заведения</p>
+            <p className="text-sm text-muted-foreground">
+              После удаления будут безвозвратно стерты все данные меню и оформления. Подписка останется активной до конца оплаченного периода, возврат средств не производится.
+            </p>
+          </div>
+        </CardContent>
+        <CardFooter>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={!activeTeam || deleting}>
+                {deleting ? "Удаление..." : "Удалить заведение"}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Подтвердите удаление</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Это действие нельзя отменить. Все данные заведения будут удалены, а подписка не будет возвращена. Вы уверены, что хотите продолжить?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction asChild>
+                  <Button variant="destructive" onClick={handleDeleteRestaurant} disabled={deleting}>
+                    {deleting ? "Удаление..." : "Удалить"}
+                  </Button>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </CardFooter>
       </Card>
     </div>
