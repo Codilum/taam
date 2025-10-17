@@ -62,6 +62,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
     { startDay: "Пн", endDay: "Пн", open: "09:00", close: "18:00", breakStart: "", breakEnd: "" },
   ]);
   const [deleting, setDeleting] = useState(false);
+  const [initialSubdomain, setInitialSubdomain] = useState<string>("");
   const router = useRouter();
 
   const predefinedFeatureOptions = [
@@ -119,6 +120,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
             type: restaurantData.type || "",
           });
           setFeatures(restaurantData.features || []);
+          setInitialSubdomain((restaurantData.subdomain || "").trim());
 
           if (restaurantData.hours) {
             try {
@@ -182,10 +184,14 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
       }))
     );
 
-    const saveData = { 
-      ...data, 
-      hours: formattedHours, 
-      features 
+    const trimmedSubdomain = (data.subdomain || "").trim();
+    const subdomainChanged = trimmedSubdomain !== initialSubdomain.trim();
+
+    const saveData = {
+      ...data,
+      hours: formattedHours,
+      features,
+      subdomain: trimmedSubdomain,
     };
 
     try {
@@ -199,6 +205,11 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
       });
       if (res.ok) {
         toast.success("Данные сохранены");
+        if (subdomainChanged && trimmedSubdomain) {
+          toast.info("Запись поддомена занимает до 15 минут");
+        }
+        setInitialSubdomain(trimmedSubdomain);
+        setData(prev => (prev ? { ...prev, subdomain: trimmedSubdomain } : prev));
       } else {
         toast.error("Ошибка при сохранении");
       }
