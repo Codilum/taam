@@ -15,6 +15,8 @@ from pathlib import Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 import json
+import csv
+from io import StringIO
 
 security = HTTPBearer()
 
@@ -28,6 +30,8 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30000
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+DEFAULT_MENU_ITEM_PHOTO = "https://cdn0.iconfinder.com/data/icons/iconic-kitchen-stuffs-3/64/Kitchen_line_icon_-_expand_-_62px_Tudung_Saji-1024.png"
 
 # Предопределенные типы ресторанов
 RESTAURANT_TYPES = [
@@ -186,6 +190,32 @@ def migrate_db():
 # Вызовите миграцию перед инициализацией базы
 migrate_db()
 init_db()
+
+
+def build_photo_url(photo_value: Optional[str]) -> Optional[str]:
+    if not photo_value:
+        return None
+    if photo_value.startswith("http://") or photo_value.startswith("https://"):
+        return photo_value
+    return f"/uploads/{photo_value}"
+
+
+def format_menu_item_row(row: tuple) -> "MenuItem":
+    return MenuItem(
+        id=row[0],
+        name=row[1],
+        price=row[2],
+        description=row[3],
+        calories=row[4],
+        proteins=row[5],
+        fats=row[6],
+        carbs=row[7],
+        weight=row[8],
+        photo=build_photo_url(row[9]),
+        view=bool(row[10]),
+        placenum=row[11],
+    )
+
 
 class Restaurant(BaseModel):
     id: int
@@ -834,7 +864,7 @@ def get_full_menu(restaurant_id: int):
 
     for cat in c.fetchall():
         category_id = cat[0]
-        photo_url = f"/uploads/{cat[1]}" if cat[1] else None
+        photo_url = build_photo_url(cat[1])
 
         # Получаем блюда этой категории
         c.execute("""
@@ -845,20 +875,7 @@ def get_full_menu(restaurant_id: int):
         """, (category_id,))
         items = []
         for row in c.fetchall():
-            items.append({
-                "id": row[0],
-                "name": row[1],
-                "price": row[2],
-                "description": row[3],
-                "calories": row[4],
-                "proteins": row[5],
-                "fats": row[6],
-                "carbs": row[7],
-                "weight": row[8],
-                "photo": f"/uploads/{row[9]}" if row[9] else None,
-                "view": bool(row[10]),
-                "placenum": row[11]
-            })
+            items.append(format_menu_item_row(row).dict())
 
         categories.append({
             "id": category_id,
@@ -1254,15 +1271,38 @@ def create_menu_item(restaurant_id: int, category_id: int, req: CreateMenuItemRe
     else:
         placenum = req.placenum
     
+    view_value = req.view if req.view is not None else True
     c.execute('''
-        INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, view, placenum)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (category_id, req.name, req.price, req.description, req.calories, req.proteins, req.fats, req.carbs, req.weight, req.view, placenum))
+        INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        category_id,
+        req.name,
+        req.price,
+        req.description,
+        req.calories,
+        req.proteins,
+        req.fats,
+        req.carbs,
+        req.weight,
+        DEFAULT_MENU_ITEM_PHOTO,
+        int(bool(view_value)),
+        placenum,
+    ))
     item_id = c.lastrowid
     conn.commit()
+
+    c.execute('''
+        SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
+        FROM menu_items WHERE id = ?
+    ''', (item_id,))
+    row = c.fetchone()
     conn.close()
-    return MenuItem(id=item_id, name=req.name, price=req.price, description=req.description, calories=req.calories,
-                    proteins=req.proteins, fats=req.fats, carbs=req.carbs, weight=req.weight, view=req.view, placenum=placenum)
+
+    if not row:
+        raise HTTPException(500, "Не удалось создать блюдо")
+
+    return format_menu_item_row(row)
 
 @app.get("/api/restaurants/{restaurant_id}/menu-categories/{category_id}/items", response_model=list[MenuItem])
 def get_menu_items(restaurant_id: int, category_id: int, current_user: dict = Depends(get_current_user)):
@@ -1282,23 +1322,217 @@ def get_menu_items(restaurant_id: int, category_id: int, current_user: dict = De
     """, (category_id,))
     rows = c.fetchall()
     conn.close()
-    items = []
-    for row in rows:
-        items.append(MenuItem(
-            id=row[0], 
-            name=row[1], 
-            price=row[2], 
-            description=row[3], 
-            calories=row[4],
-            proteins=row[5], 
-            fats=row[6], 
-            carbs=row[7], 
-            weight=row[8],
-            photo=f"/uploads/{row[9]}" if row[9] else None,
-            view=bool(row[10]),
-            placenum=row[11]
-        ))
-    return items
+    return [format_menu_item_row(row) for row in rows]
+
+
+@app.post("/api/restaurants/{restaurant_id}/menu-categories/{category_id}/import-csv")
+async def import_menu_items_from_csv(
+    restaurant_id: int,
+    category_id: int,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    raw_content = await file.read()
+    if not raw_content:
+        raise HTTPException(400, "Файл пустой")
+
+    decoded_text = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1251"):
+        try:
+            decoded_text = raw_content.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    if decoded_text is None:
+        raise HTTPException(400, "Не удалось прочитать файл. Используйте кодировку UTF-8")
+
+    reader = csv.DictReader(StringIO(decoded_text))
+    if not reader.fieldnames:
+        raise HTTPException(400, "Файл не содержит заголовков")
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+
+    c.execute("SELECT id FROM menu_categories WHERE id = ? AND restaurant_id = ?", (category_id, restaurant_id))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Категория не найдена")
+
+    c.execute("SELECT MAX(placenum) FROM menu_items WHERE category_id = ?", (category_id,))
+    max_placenum_row = c.fetchone()
+    next_placenum = (max_placenum_row[0] or 0) if max_placenum_row else 0
+
+    created = 0
+    updated = 0
+    errors: List[str] = []
+
+    def normalize_row(row: dict) -> dict:
+        normalized = {}
+        for key, value in row.items():
+            if key is None:
+                continue
+            normalized[key.strip().lower()] = (value.strip() if isinstance(value, str) else value)
+        return normalized
+
+    def get_value(normalized: dict, keys: List[str]) -> Optional[str]:
+        for key in keys:
+            if key in normalized and normalized[key] != "":
+                return normalized[key]
+        return None
+
+    def parse_float(value: Optional[str], allow_negative: bool = False) -> Optional[float]:
+        if value is None:
+            return None
+        normalized_value = value.replace(" ", "").replace(",", ".")
+        if normalized_value == "":
+            return None
+        try:
+            number = float(normalized_value)
+            if not allow_negative and number < 0:
+                return None
+            return number
+        except ValueError:
+            return None
+
+    def parse_int(value: Optional[str]) -> Optional[int]:
+        float_value = parse_float(value)
+        if float_value is None:
+            return None
+        return int(round(float_value))
+
+    bju_keys = ["бжу"]
+    name_keys = ["name", "название"]
+    price_keys = ["price", "цена"]
+    calories_keys = ["calories", "ккал", "калории"]
+    description_keys = ["description", "описание"]
+    weight_keys = ["weight", "вес"]
+    proteins_keys = ["proteins", "protein", "белки", "белок"]
+    fats_keys = ["fats", "fat", "жиры", "жир"]
+    carbs_keys = ["carbs", "углеводы", "углев", "carbohydrates"]
+    status_keys = ["status", "статус"]
+
+    for index, row in enumerate(reader, start=2):  # 2 because header is line 1
+        normalized = normalize_row(row)
+
+        name = get_value(normalized, name_keys)
+        if not name:
+            errors.append(f"Строка {index}: отсутствует название блюда")
+            continue
+
+        price_raw = get_value(normalized, price_keys)
+        price = parse_float(price_raw)
+        if price is None:
+            errors.append(f"Строка {index}: некорректное значение цены")
+            continue
+
+        description = get_value(normalized, description_keys)
+        calories = parse_int(get_value(normalized, calories_keys))
+        weight = parse_float(get_value(normalized, weight_keys))
+
+        proteins = parse_float(get_value(normalized, proteins_keys))
+        fats = parse_float(get_value(normalized, fats_keys))
+        carbs = parse_float(get_value(normalized, carbs_keys))
+
+        bju_value = get_value(normalized, bju_keys)
+        if bju_value and (proteins is None or fats is None or carbs is None):
+            parts = [part.strip() for part in csv.reader([bju_value.replace("/", ",")], delimiter=",").__next__()]
+            parts = [part for part in parts if part != ""]
+            if len(parts) == 3:
+                proteins = parse_float(parts[0]) if proteins is None else proteins
+                fats = parse_float(parts[1]) if fats is None else fats
+                carbs = parse_float(parts[2]) if carbs is None else carbs
+
+        status_value = get_value(normalized, status_keys)
+        view = True
+        if status_value:
+            status_normalized = status_value.lower()
+            if status_normalized in {"невидимое", "hidden", "0", "false", "нет"}:
+                view = False
+            elif status_normalized in {"видимое", "visible", "1", "true", "да"}:
+                view = True
+
+        c.execute(
+            "SELECT id, photo FROM menu_items WHERE category_id = ? AND LOWER(name) = LOWER(?)",
+            (category_id, name),
+        )
+        existing = c.fetchone()
+
+        if existing:
+            item_id, photo = existing
+            c.execute(
+                """
+                UPDATE menu_items
+                SET price = ?, description = ?, calories = ?, proteins = ?, fats = ?, carbs = ?, weight = ?, view = ?
+                WHERE id = ?
+                """,
+                (
+                    price,
+                    description,
+                    calories,
+                    proteins,
+                    fats,
+                    carbs,
+                    weight,
+                    int(view),
+                    item_id,
+                ),
+            )
+            if not photo:
+                c.execute(
+                    "UPDATE menu_items SET photo = ? WHERE id = ?",
+                    (DEFAULT_MENU_ITEM_PHOTO, item_id),
+                )
+            updated += 1
+        else:
+            next_placenum += 1
+            c.execute(
+                """
+                INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category_id,
+                    name,
+                    price,
+                    description,
+                    calories,
+                    proteins,
+                    fats,
+                    carbs,
+                    weight,
+                    DEFAULT_MENU_ITEM_PHOTO,
+                    int(view),
+                    next_placenum,
+                ),
+            )
+            created += 1
+
+    conn.commit()
+
+    c.execute(
+        """
+        SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
+        FROM menu_items WHERE category_id = ? ORDER BY placenum ASC
+        """,
+        (category_id,),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    items = [format_menu_item_row(row).dict() for row in rows]
+
+    return {
+        "created": created,
+        "updated": updated,
+        "errors": errors,
+        "items": items,
+    }
 
 @app.patch("/api/restaurants/{restaurant_id}/menu-items/{item_id}")
 def update_menu_item(
@@ -1384,21 +1618,11 @@ def update_menu_item(
     """, (item_id,))
     row = c.fetchone()
     conn.close()
-    item = (MenuItem(
-            id=row[0], 
-            name=row[1], 
-            price=row[2], 
-            description=row[3], 
-            calories=row[4],
-            proteins=row[5], 
-            fats=row[6], 
-            carbs=row[7], 
-            weight=row[8],
-            photo=f"/uploads/{row[9]}" if row[9] else None,
-            view=bool(row[10]),
-            placenum=row[11]
-        ))
-    return item
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Блюдо не найдено")
+
+    return format_menu_item_row(row)
 
 @app.delete("/api/restaurants/{restaurant_id}/menu-items/{item_id}")
 def delete_menu_item(
