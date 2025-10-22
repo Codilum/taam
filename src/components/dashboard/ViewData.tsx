@@ -457,40 +457,65 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     });
   }, [data]);
 
-  // IntersectionObserver: подсветка категории при скролле
+  // Отслеживание активной категории при прокрутке
   useEffect(() => {
-    if (!data || !data.menu || data.menu.length === 0) return;
+    if (
+      typeof window === "undefined" ||
+      !data ||
+      !data.menu ||
+      data.menu.length === 0
+    )
+      return;
 
-    const visibleCategories = getVisibleCategories();
-    if (visibleCategories.length === 0) return;
+    const handleScroll = () => {
+      const categories = getVisibleCategories();
+      if (categories.length === 0) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const idAttr = entry.target.getAttribute("data-id");
-            if (idAttr) {
-              const categoryId = Number(idAttr);
-              setActiveCat(categoryId);
-              scrollCategoryIntoView(categoryId);
-            }
-          }
-        });
-      },
-      {
-        root: null,
-        rootMargin: "-20% 0px -70% 0px",
-        threshold: 0.1,
+      const headerHeight =
+        menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const targetLine = headerHeight + 24;
+
+      let newActive: number | null = null;
+
+      for (const cat of categories) {
+        const el = categoryRefs.current[cat.id];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= targetLine && rect.bottom > targetLine) {
+          newActive = cat.id;
+          break;
+        }
       }
-    );
 
-    visibleCategories.forEach((cat) => {
-      const el = categoryRefs.current[cat.id];
-      if (el) observer.observe(el);
-    });
+      if (!newActive) {
+        for (const cat of categories) {
+          const el = categoryRefs.current[cat.id];
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          if (rect.top > targetLine) {
+            newActive = cat.id;
+            break;
+          }
+        }
+      }
 
-    return () => observer.disconnect();
-  }, [data, normalizedSearch]);
+      if (!newActive && categories.length > 0) {
+        newActive = categories[categories.length - 1].id;
+      }
+
+      if (newActive && newActive !== activeCat) {
+        setActiveCat(newActive);
+        scrollCategoryIntoView(newActive);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [data, normalizedSearch, activeCat]);
 
   useEffect(() => {
     if (!data || !data.menu || data.menu.length === 0) {
@@ -571,6 +596,24 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     }
   };
 
+  const scrollToCategory = (categoryId: number) => {
+    if (typeof window === "undefined") return;
+
+    const element = categoryRefs.current[categoryId];
+    if (!element) return;
+
+    const headerHeight =
+      menuHeaderRef.current?.getBoundingClientRect().height || 0;
+    const offset = headerHeight + 24;
+    const elementRect = element.getBoundingClientRect();
+    const targetTop = window.scrollY + elementRect.top - offset;
+
+    window.scrollTo({
+      top: targetTop > 0 ? targetTop : 0,
+      behavior: "smooth",
+    });
+  };
+
   const handleItemClick = (
     item: MenuItem,
     index: number,
@@ -602,10 +645,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
         setCurrentItemIndex(0);
         setCurrentCategoryId(nextCat.id);
         setActiveCat(nextCat.id);
-        categoryRefs.current[nextCat.id]?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        scrollToCategory(nextCat.id);
         scrollCategoryIntoView(nextCat.id);
       }
     }
@@ -631,10 +671,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
         setCurrentItemIndex(lastIndex);
         setCurrentCategoryId(prevCat.id);
         setActiveCat(prevCat.id);
-        categoryRefs.current[prevCat.id]?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        scrollToCategory(prevCat.id);
         scrollCategoryIntoView(prevCat.id);
       }
     }
@@ -829,6 +866,13 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const selectedItemQuantity = selectedItem
     ? cartItems[selectedItem.id] || 0
     : 0;
+  const selectedItemWeight = selectedItem
+    ? Number(selectedItem.weight)
+    : null;
+  const showSelectedWeight =
+    selectedItemWeight !== null &&
+    !Number.isNaN(selectedItemWeight) &&
+    selectedItemWeight > 0;
   const timeLeftText =
     timeLeft !== null
       ? timeLeft <= 1
@@ -1150,10 +1194,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                       key={cat.id}
                       onClick={() => {
                         setActiveCat(cat.id);
-                        categoryRefs.current[cat.id]?.scrollIntoView({
-                          behavior: "smooth",
-                          block: "start",
-                        });
+                        scrollToCategory(cat.id);
                         scrollCategoryIntoView(cat.id);
                       }}
                       className={cn(
@@ -1196,7 +1237,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     ref={(el) => {
                       categoryRefs.current[cat.id] = el;
                     }}
-                    className="scroll-mt-24"
+                    className="scroll-mt-36"
                   >
                     <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
                     {itemsToShow.length > 0 ? (
@@ -1204,6 +1245,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                         {itemsToShow.map((item, index) => {
                           const quantity = cartItems[item.id] || 0;
                           const inCart = quantity > 0;
+                          const weightValue = Number(item.weight);
+                          const showWeight =
+                            !Number.isNaN(weightValue) && weightValue > 0;
                           return (
                             <div
                               key={item.id}
@@ -1237,17 +1281,17 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                                   <span className="font-medium text-sm break-words flex-1 pr-2">
                                     {item.name}
                                   </span>
-                                  {item.weight && item.weight !== 0.0 && (
+                                  {showWeight && (
                                     <span className="text-gray-500 text-xs whitespace-nowrap">
-                                      {item.weight} гр
+                                      {weightValue} гр
                                     </span>
                                   )}
                                 </div>
 
-                                <div className="text-black font-semibold text-sm">
-                                  {item.price} ₽
-                                </div>
-                                <div className="mt-auto pt-2">
+                                <div className="mt-auto flex flex-col gap-2">
+                                  <div className="text-black font-semibold text-sm">
+                                    {item.price} ₽
+                                  </div>
                                   {inCart ? (
                                     <div className="flex items-center justify-between gap-2">
                                       <button
@@ -1461,10 +1505,10 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                   </div>
                 )}
               </div>
-              {selectedItem?.weight !== 0.0 && selectedItem?.weight && (
+              {showSelectedWeight && (
                 <div className="text-right">
                   <p className="font-normal text-black"></p>
-                  <p>{selectedItem.weight} гр</p>
+                  <p>{selectedItemWeight} гр</p>
                 </div>
               )}
             </div>

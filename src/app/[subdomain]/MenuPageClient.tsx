@@ -184,7 +184,7 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
         </div>
 
         {data.menu.map(cat => (
-          <div key={cat.id} id={`cat-${cat.id}`} className="scroll-mt-24 space-y-2">
+          <div key={cat.id} id={`cat-${cat.id}`} className="scroll-mt-36 space-y-2">
             <h3 className="text-2xl font-bold">{cat.name}</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {cat.items.map((item, idx) => (

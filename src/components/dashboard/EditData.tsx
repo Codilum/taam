@@ -53,6 +53,35 @@ interface RestaurantData {
   type: string;
 }
 
+const parsePhotoError = async (res: Response, fallback: string) => {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+
+    try {
+      const data = JSON.parse(text) as any;
+      if (typeof data === "string" && data.trim()) return data;
+      if (data && typeof data.message === "string" && data.message.trim()) {
+        return data.message;
+      }
+      if (data && typeof data.detail === "string" && data.detail.trim()) {
+        return data.detail;
+      }
+      if (data && typeof data.error === "string" && data.error.trim()) {
+        return data.error;
+      }
+    } catch {
+      if (text.trim()) {
+        return text;
+      }
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+};
+
 export default function EditData({ activeTeam }: { activeTeam: string }) {
   const [data, setData] = useState<RestaurantData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -234,11 +263,19 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
           setData((prev) => (prev ? { ...prev, photo } : prev));
           toast.success("Фото обновлено");
         } else {
-          toast.error("Ошибка загрузки фото");
+          const message = await parsePhotoError(
+            res,
+            "Ошибка загрузки фото"
+          );
+          toast.error(message);
         }
       } catch (err) {
         console.error(err);
-        toast.error("Ошибка загрузки фото");
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : "Ошибка загрузки фото";
+        toast.error(message);
       }
     }
   };

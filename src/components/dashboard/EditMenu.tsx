@@ -62,6 +62,35 @@ interface ImportResponse {
   items?: MenuItem[];
 }
 
+const parseErrorMessage = async (res: Response, fallback: string) => {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+
+    try {
+      const data = JSON.parse(text) as any;
+      if (typeof data === "string" && data.trim()) return data;
+      if (data && typeof data.message === "string" && data.message.trim()) {
+        return data.message;
+      }
+      if (data && typeof data.detail === "string" && data.detail.trim()) {
+        return data.detail;
+      }
+      if (data && typeof data.error === "string" && data.error.trim()) {
+        return data.error;
+      }
+    } catch {
+      if (text.trim()) {
+        return text;
+      }
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+};
+
 export default function EditMenu({ activeTeam }: { activeTeam: string }) {
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [items, setItems] = useState<MenuItem[]>([]);
@@ -345,7 +374,11 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       );
 
       if (!res.ok) {
-        throw new Error('Ошибка загрузки фото');
+        const message = await parseErrorMessage(
+          res,
+          "Ошибка загрузки фото"
+        );
+        throw new Error(message);
       }
 
       return await res.json();
@@ -374,16 +407,26 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         
         if (res.ok) {
           const updatedItem = await res.json();
-          
-          // Если есть новое фото, загружаем его
+
           if (photoFile) {
             await uploadItemPhoto(editingItem.id, photoFile);
           }
-          
-          setItems(items.map(item => 
-            item.id === editingItem.id ? { ...updatedItem, category_id: editingItem.category_id } : item
-          ));
+
+          setItems(
+            items.map((item) =>
+              item.id === editingItem.id
+                ? { ...updatedItem, category_id: editingItem.category_id }
+                : item
+            )
+          );
           toast.success("Блюдо обновлено");
+        } else {
+          const message = await parseErrorMessage(
+            res,
+            "Не удалось обновить блюдо"
+          );
+          toast.error(message);
+          return;
         }
       } else if (editingCategory) {
         // Создание нового блюда
@@ -437,21 +480,29 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
             ...prevItems,
             {
               ...newItem,
-              category_id: editingCategory.id
-            }
+              category_id: editingCategory.id,
+            },
           ]);
 
           toast.success("Блюдо добавлено");
         } else {
-          const errorData = await res.json().catch(() => null);
-          toast.error(errorData?.detail || "Не удалось создать блюдо");
+          const message = await parseErrorMessage(
+            res,
+            "Не удалось создать блюдо"
+          );
+          toast.error(message);
+          return;
         }
       }
       
       setIsItemDialogOpen(false);
       setEditingItem(null);
     } catch (error) {
-      toast.error("Ошибка при сохранении блюда");
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Ошибка при сохранении блюда";
+      toast.error(message);
     }
   };
 
@@ -615,9 +666,9 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr">
                   {[1, 2, 3].map((_, itemIndex) => (
-                    <Card key={itemIndex} className="p-4 space-y-3">
+                    <Card key={itemIndex} className="p-4 space-y-3 h-full flex flex-col">
                       <Skeleton className="w-4 h-4 absolute top-2 right-2" />
                       <div>
                         <Skeleton className="h-4 w-20" />
@@ -885,7 +936,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
                                 <div
                                   {...provided.droppableProps}
                                   ref={provided.innerRef}
-                                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 overflow-visible"
+                                  className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 overflow-visible auto-rows-fr"
                                 >
                                   {getItemsForCategory(category.id).map((item, index) => (
                                     <Draggable
@@ -899,7 +950,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
                                           {...provided.draggableProps}
                                           className="min-w-0"
                                         >
-                                          <Card className="p-3 sm:p-4 space-y-3 relative break-words max-w-full">
+                                          <Card className="p-3 sm:p-4 space-y-3 relative break-words max-w-full h-full flex flex-col">
                                             <div {...provided.dragHandleProps} className="absolute top-2 right-2 z-10">
                                               <GripVertical className="w-4 h-4 text-gray-400" />
                                             </div>
@@ -933,7 +984,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
                                             <p className="text-lg font-bold">{item.price} ₽</p>
                                             
                                             {/* Кнопки управления */}
-                                            <div className="flex gap-2 flex-wrap">
+                                            <div className="flex gap-2 flex-wrap mt-auto">
                                               <Button
                                                 variant="outline"
                                                 size="sm"
@@ -1168,11 +1219,19 @@ function ItemForm({
           const uploadData = await uploadRes.json();
           photoUrl = uploadData.photo;
         } else {
-          throw new Error("Ошибка загрузки фото");
+          const message = await parseErrorMessage(
+            uploadRes,
+            "Ошибка загрузки фото"
+          );
+          throw new Error(message);
         }
       } catch (error) {
         console.error("Ошибка загрузки фото:", error);
-        toast.error("Ошибка загрузки фото");
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Ошибка загрузки фото";
+        toast.error(message);
         return;
       }
     }

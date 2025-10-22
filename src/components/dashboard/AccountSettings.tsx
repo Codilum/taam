@@ -38,6 +38,35 @@ import {
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 
+const parseUploadError = async (res: Response, fallback: string) => {
+  try {
+    const text = await res.text()
+    if (!text) return fallback
+
+    try {
+      const data = JSON.parse(text) as any
+      if (typeof data === "string" && data.trim()) return data
+      if (data && typeof data.message === "string" && data.message.trim()) {
+        return data.message
+      }
+      if (data && typeof data.detail === "string" && data.detail.trim()) {
+        return data.detail
+      }
+      if (data && typeof data.error === "string" && data.error.trim()) {
+        return data.error
+      }
+    } catch {
+      if (text.trim()) {
+        return text
+      }
+    }
+  } catch {
+    return fallback
+  }
+
+  return fallback
+}
+
 // Тип для данных аккаунта
 interface AccountData {
   email: string
@@ -146,7 +175,13 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
           headers: { Authorization: `Bearer ${token}` },
           body: formData,
         })
-        if (!photoResponse.ok) throw new Error("Failed to upload photo")
+        if (!photoResponse.ok) {
+          const message = await parseUploadError(
+            photoResponse,
+            "Ошибка загрузки фото"
+          )
+          throw new Error(message)
+        }
         const photoData: AccountData = await photoResponse.json()
         setAccountData({ ...accountData, photo: photoData.photo, is_profile_complete: photoData.is_profile_complete })
         setShowIncompleteProfileAlert(!photoData.is_profile_complete)
@@ -158,7 +193,11 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
       toast.success("Данные профиля обновлены")
     } catch (error) {
       console.error(error)
-      toast.error("Не удалось обновить данные профиля")
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Не удалось обновить данные профиля"
+      toast.error(message)
     } finally {
       setUploadingPhoto(false)
     }
