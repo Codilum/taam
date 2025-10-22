@@ -12,6 +12,7 @@ import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircleIcon } from "lucide-react";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
+import EditData from "./EditData";
 
 interface MenuItem {
   id: number;
@@ -784,6 +785,31 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   const isRestaurantIncomplete =
     !data.phone || !data.address || !data.city || !data.hours;
+  const missingRestaurantFields = [
+    !data.city && "город",
+    !data.address && "адрес",
+    !data.phone && "телефон",
+    !data.hours && "время работы",
+  ].filter(Boolean) as string[];
+
+  if (isRestaurantIncomplete) {
+    return (
+      <div className="flex flex-col bg-gray-100 min-h-screen">
+        <div className="px-4 pt-4">
+          <Alert variant="default">
+            <AlertCircleIcon />
+            <AlertTitle>Необходимо заполнить данные!</AlertTitle>
+            <AlertDescription>
+              Заполните данные заведения: {missingRestaurantFields.join(", ")}
+            </AlertDescription>
+          </Alert>
+        </div>
+        <div className="flex-1">
+          <EditData activeTeam={activeTeam} />
+        </div>
+      </div>
+    );
+  }
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
   const categoriesForNav = getVisibleCategories();
   const cartDetails: CartEntry[] = Object.entries(cartItems)
@@ -903,7 +929,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                   Мы в соцсетях
                 </h3>
                 <div className="flex gap-4 justify-center items-center">
-                  {data.instagram && (
+                  {/* {data.instagram && (
                     <a
                       href={data.instagram}
                       target="_blank"
@@ -912,7 +938,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     >
                       <Instagram className="w-6 h-6" />
                     </a>
-                  )}
+                  )} */}
                   {data.telegram && (
                     <a
                       href={`https://t.me/${data.telegram}`}
@@ -1011,7 +1037,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     </div>
                   </div>
                   <div className="flex gap-4 justify-start items-center mt-4">
-                    {data.instagram && (
+                    {/* {data.instagram && (
                       <a
                         href={data.instagram}
                         target="_blank"
@@ -1019,7 +1045,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                       >
                         <Instagram className="w-6 h-6" />
                       </a>
-                    )}
+                    )} */}
                     {data.telegram && (
                       <a
                         href={`https://t.me/${data.telegram}`}
@@ -1083,29 +1109,6 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
           </div>
         </div>
       </div>
-
-      {/* Alert */}
-      {isRestaurantIncomplete && (
-        <div className="px-0 md:px-4 mt-2">
-          <div className="max-w-6xl mx-auto p-4">
-            <Alert variant="default">
-              <AlertCircleIcon />
-              <AlertTitle>Необходимо заполнить данные!</AlertTitle>
-              <AlertDescription>
-                Заполните данные заведения:{" "}
-                {[
-                  !data.city && "город",
-                  !data.address && "адрес",
-                  !data.phone && "телефон",
-                  !data.hours && "время работы",
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-              </AlertDescription>
-            </Alert>
-          </div>
-        </div>
-      )}
 
       {/* Spacing between info and menu */}
       <div className="h-2 md:h-2"></div>
@@ -1197,7 +1200,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                   >
                     <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
                     {itemsToShow.length > 0 ? (
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3">
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3 auto-rows-fr">
                         {itemsToShow.map((item, index) => {
                           const quantity = cartItems[item.id] || 0;
                           const inCart = quantity > 0;
@@ -1205,7 +1208,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                             <div
                               key={item.id}
                               className={cn(
-                                "relative rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden",
+                                "relative flex h-full flex-col rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden",
                                 inCart ? "border border-black" : ""
                               )}
                               onClick={() =>
@@ -1229,7 +1232,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                                 <div className="w-full aspect-square bg-gray-200 rounded-t-xl" />
                               )}
 
-                              <div className="p-2 space-y-1">
+                              <div className="flex flex-1 flex-col gap-2 p-2">
                                 <div className="flex justify-between items-start">
                                   <span className="font-medium text-sm break-words flex-1 pr-2">
                                     {item.name}
@@ -1244,45 +1247,46 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                                 <div className="text-black font-semibold text-sm">
                                   {item.price} ₽
                                 </div>
-
-                                {inCart ? (
-                                  <div className="flex items-center justify-between gap-2 mt-2">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        decreaseCartItem(item.id);
-                                      }}
-                                      className="w-8 h-7 flex-1 items-center justify-center rounded-lg bg-[#D9D9D9] text-base"
-                                    >
-                                      −
-                                    </button>
-                                    <span className="text-sm font-semibold">
-                                      {quantity}
-                                    </span>
+                                <div className="mt-auto pt-2">
+                                  {inCart ? (
+                                    <div className="flex items-center justify-between gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          decreaseCartItem(item.id);
+                                        }}
+                                        className="flex h-7 flex-1 items-center justify-center rounded-lg bg-[#D9D9D9] text-base"
+                                      >
+                                        −
+                                      </button>
+                                      <span className="text-sm font-semibold">
+                                        {quantity}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          addToCart(item.id);
+                                        }}
+                                        className="flex h-7 flex-1 items-center justify-center rounded-lg bg-[#FFEB5A] text-black text-xs font-semibold"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  ) : (
                                     <button
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         addToCart(item.id);
                                       }}
-                                      className="flex-1 h-7 rounded-lg bg-[#FFEB5A] text-black text-xs font-semibold"
+                                      className="flex w-full items-center justify-center rounded-lg bg-[#FFEB5A] py-1 text-xs font-medium text-black"
                                     >
-                                      +
+                                      В заказ
                                     </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      addToCart(item.id);
-                                    }}
-                                    className="w-full text-xs font-medium mt-2 py-1 rounded-lg bg-[#FFEB5A] text-black"
-                                  >
-                                    В список
-                                  </button>
-                                )}
+                                  )}
+                                </div>
                               </div>
                             </div>
                           );
@@ -1494,12 +1498,12 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               <div className="flex items-center gap-2 sm:gap-3 justify-end w-full sm:w-auto ">
                 {" "}
                 {selectedItem && selectedItemQuantity > 0 ? (
-                  <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2">
+                  <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2 w-full">
                     {" "}
                     <button
                       type="button"
                       onClick={() => decreaseCartItem(selectedItem.id)}
-                      className="w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
+                      className="w-full sm:w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
                     >
                       {" "}
                       −{" "}
@@ -1510,7 +1514,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     <button
                       type="button"
                       onClick={() => addToCart(selectedItem.id)}
-                      className="w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
+                      className="w-full sm:w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
                     >
                       {" "}
                       +{" "}
@@ -1522,7 +1526,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     className="h-11 px-6 rounded-lg bg-[#FFEB5A] text-black text-sm font-semibold w-full"
                   >
                     {" "}
-                    Добавить в список{" "}
+                    В заказ{" "}
                   </Button>
                 ) : null}{" "}
               </div>
