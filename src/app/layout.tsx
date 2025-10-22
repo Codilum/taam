@@ -11,7 +11,7 @@ const geologica = Geologica({
 
 // ✅ Твой бренд и favicon
 export const metadata: Metadata = {
-  title: "TAAM.MENU — QR-меню для ресторанов",
+  title: "taam.menu — QR-меню для ресторанов",
   description: "Современное QR-меню для ресторанов и кафе. Быстро, удобно и стильно.",
   icons: {
     icon: [
