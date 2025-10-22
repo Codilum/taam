@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import {
   GalleryVerticalEnd,
   Settings2,
@@ -43,6 +43,13 @@ interface RestaurantData {
   phone: string | null
   subdomain: string | null
   type: string | null
+  subscription?: {
+    plan_code: string | null
+    plan_name: string | null
+    status: string | null
+    started_at?: string | null
+    expires_at?: string | null
+  } | null
 }
 
 export function AppSidebar({
@@ -99,28 +106,36 @@ export function AppSidebar({
   }, [])
 
   // Загрузка данных ресторана по activeTeam (id)
-  useEffect(() => {
-    const fetchRestaurant = async () => {
-      if (!activeTeam) return
-      setLoadingRestaurant(true)
-      try {
-        const res = await fetch(`/api/restaurants/${activeTeam}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
-        })
-        if (res.ok) {
-          const data: RestaurantData = await res.json()
-          setRestaurantData(data)
-        }
-      } catch (error) {
-        console.error("Ошибка загрузки данных ресторана:", error)
-        setRestaurantData(null)
-      } finally {
-        setLoadingRestaurant(false)
+  const fetchRestaurant = useCallback(async () => {
+    if (!activeTeam) return
+    setLoadingRestaurant(true)
+    try {
+      const res = await fetch(`/api/restaurants/${activeTeam}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
+      })
+      if (res.ok) {
+        const data: RestaurantData = await res.json()
+        setRestaurantData(data)
       }
+    } catch (error) {
+      console.error("Ошибка загрузки данных ресторана:", error)
+      setRestaurantData(null)
+    } finally {
+      setLoadingRestaurant(false)
     }
-
-    fetchRestaurant()
   }, [activeTeam])
+
+  useEffect(() => {
+    fetchRestaurant()
+  }, [fetchRestaurant])
+
+  useEffect(() => {
+    const handler = () => {
+      fetchRestaurant()
+    }
+    window.addEventListener("subscription:updated", handler)
+    return () => window.removeEventListener("subscription:updated", handler)
+  }, [fetchRestaurant])
 
   // Обработчик клика по пункту меню
   const handleNavClick = (block: string) => {
@@ -159,7 +174,7 @@ export function AppSidebar({
       {
         name: restaurantData?.name || "Мой ресторан",
         logo: GalleryVerticalEnd,
-        plan: "Премиум",
+        plan: restaurantData?.subscription?.plan_name || "Без подписки",
         id: activeTeam,
       },
     ],

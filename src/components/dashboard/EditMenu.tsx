@@ -216,6 +216,13 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         setCategories([...categories, newCategory]);
         setIsCategoryDialogOpen(false);
         toast.success("Категория добавлена");
+      } else {
+        const message = await parseErrorMessage(
+          res,
+          "Ошибка при создании категории"
+        );
+        toast.error(message);
+        return;
       }
     } catch (error) {
       toast.error("Ошибка при создании категории");

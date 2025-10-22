@@ -54,6 +54,9 @@ interface RestaurantData {
 }
 
 const parsePhotoError = async (res: Response, fallback: string) => {
+  if (res.status === 413) {
+    return "Файл слишком большой";
+  }
   try {
     const text = await res.text();
     if (!text) return fallback;
@@ -71,6 +74,9 @@ const parsePhotoError = async (res: Response, fallback: string) => {
         return data.error;
       }
     } catch {
+      if (text.includes("Request Entity Too Large")) {
+        return "Файл слишком большой";
+      }
       if (text.trim()) {
         return text;
       }

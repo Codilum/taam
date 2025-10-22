@@ -20,7 +20,7 @@ import {
 type Restaurant = {
   id: string
   name: string
-  plan?: string
+  plan: string
   logo: React.ElementType
 }
 
@@ -33,34 +33,41 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
   const { isMobile } = useSidebar()
   const [teams, setTeams] = React.useState<Restaurant[]>([])
 
-  // Загружаем список заведений при монтировании
-  React.useEffect(() => {
-    async function fetchRestaurants() {
-      try {
-        const res = await fetch("/api/restaurants", {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-          },
-        })
-        if (!res.ok) throw new Error("Failed to fetch restaurant data")
-        const data = await res.json()
-        const formatted = data.map((r: any) => ({
-          id: r.id.toString(),
-          name: r.name,
-          plan: r.plan || "Без подписки",
-          logo: Store, // временная иконка
-        }))
-        setTeams(formatted)
-        // Если активный ресторан ещё не установлен — ставим первый
-        if (formatted.length > 0 && !activeTeam) {
-          setActiveTeam(formatted[0].id)
-        }
-      } catch (err) {
-        console.error(err)
+  const fetchRestaurants = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/restaurants", {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
+        },
+      })
+      if (!res.ok) throw new Error("Failed to fetch restaurant data")
+      const data = await res.json()
+      const formatted = data.map((r: any) => ({
+        id: r.id.toString(),
+        name: r.name,
+        plan: r.subscription?.plan_name || "Без подписки",
+        logo: Store,
+      }))
+      setTeams(formatted)
+      if (formatted.length > 0 && !activeTeam) {
+        setActiveTeam(formatted[0].id)
       }
+    } catch (err) {
+      console.error(err)
     }
+  }, [activeTeam, setActiveTeam])
+
+  React.useEffect(() => {
     fetchRestaurants()
-  }, [])
+  }, [fetchRestaurants])
+
+  React.useEffect(() => {
+    const handler = () => {
+      fetchRestaurants()
+    }
+    window.addEventListener("subscription:updated", handler)
+    return () => window.removeEventListener("subscription:updated", handler)
+  }, [fetchRestaurants])
 
   // Создание нового заведения
   const handleAddRestaurant = async () => {
@@ -75,10 +82,10 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
       })
       if (!res.ok) throw new Error("Не удалось создать заведение")
       const newRestaurant = await res.json()
-      const restaurant = {
+      const restaurant: Restaurant = {
         id: newRestaurant.id.toString(),
         name: newRestaurant.name,
-        plan: newRestaurant.city || "Без плана",
+        plan: newRestaurant.subscription?.plan_name || "Без подписки",
         logo: Store,
       }
       setTeams((prev) => [...prev, restaurant])
