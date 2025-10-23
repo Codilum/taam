@@ -138,6 +138,17 @@ export function AppSidebar({
     return () => window.removeEventListener("subscription:updated", handler)
   }, [fetchRestaurant])
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ team?: string }>).detail
+      if (!detail?.team || detail.team === activeTeam) {
+        fetchRestaurant()
+      }
+    }
+    window.addEventListener("restaurant:updated", handler as EventListener)
+    return () => window.removeEventListener("restaurant:updated", handler as EventListener)
+  }, [activeTeam, fetchRestaurant])
+
   // Обработчик клика по пункту меню
   const handleNavClick = (block: string) => {
     setActiveBlock(block)

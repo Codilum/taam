@@ -860,28 +860,30 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       </Dialog>
 
       {/* Кнопки управления категориями */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() => {
+              setEditingCategory(null);
+              setIsCategoryDialogOpen(true);
+            }}
+            variant="outline"
+            className="w-fit"
+            style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
+          >
+            <PlusCircle className="w-4 h-4 mr-2" /> Добавить категорию
+          </Button>
+        </div>
         <Button
           onClick={() => {
             resetImportState();
             setIsImportDialogOpen(true);
           }}
           variant="outline"
-          className="w-fit"
+          className="w-fit sm:ml-auto"
           style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
         >
           <Download className="w-4 h-4 mr-2" /> Импорт CSV
-        </Button>
-        <Button
-          onClick={() => {
-            setEditingCategory(null);
-            setIsCategoryDialogOpen(true);
-          }}
-          variant="outline"
-          className="w-fit"
-          style={{ backgroundColor: '#FFEA5A', color: '#3d3d3d', borderColor: '#FFEA5A' }}
-        >
-          <PlusCircle className="w-4 h-4 mr-2" /> Добавить категорию
         </Button>
       </div>
 

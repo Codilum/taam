@@ -69,6 +69,17 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
     return () => window.removeEventListener("subscription:updated", handler)
   }, [fetchRestaurants])
 
+  React.useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ team?: string }>).detail
+      if (!detail?.team || detail.team === activeTeam) {
+        fetchRestaurants()
+      }
+    }
+    window.addEventListener("restaurant:updated", handler as EventListener)
+    return () => window.removeEventListener("restaurant:updated", handler as EventListener)
+  }, [activeTeam, fetchRestaurants])
+
   // Создание нового заведения
   const handleAddRestaurant = async () => {
     try {
