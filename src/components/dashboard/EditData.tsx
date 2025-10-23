@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { X } from "lucide-react";
+import { X, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -26,6 +26,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { showErrorToast } from "@/lib/show-error-toast";
 
 interface WorkingHours {
   startDay: string;
@@ -176,11 +178,11 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
             }
           }
         } else {
-          toast.error("Ошибка загрузки данных заведения");
+        showErrorToast("Ошибка загрузки данных заведения");
         }
       } catch (err) {
         console.error(err);
-        toast.error("Ошибка загрузки данных");
+        showErrorToast("Ошибка загрузки данных");
       } finally {
         setLoading(false);
       }
@@ -238,6 +240,16 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
         },
         body: JSON.stringify(saveData),
       });
+      const responseText = await res.text();
+      let responseData: any = null;
+      if (responseText) {
+        try {
+          responseData = JSON.parse(responseText);
+        } catch {
+          responseData = null;
+        }
+      }
+
       if (res.ok) {
         toast.success("Данные сохранены");
         if (subdomainChanged && trimmedSubdomain) {
@@ -245,12 +257,23 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
         }
         setInitialSubdomain(trimmedSubdomain);
         setData(prev => (prev ? { ...prev, subdomain: trimmedSubdomain } : prev));
+        setTimeout(() => {
+          if (typeof window !== "undefined") {
+            window.location.reload();
+          } else {
+            router.refresh();
+          }
+        }, 1200);
       } else {
-        toast.error("Ошибка при сохранении");
+        const message =
+          (typeof responseData === "string" && responseData.trim())
+            ? responseData
+            : responseData?.detail || responseData?.message || responseText || "Ошибка при сохранении";
+        showErrorToast(message);
       }
     } catch (err) {
       console.error(err);
-      toast.error("Ошибка при сохранении");
+      showErrorToast("Ошибка при сохранении");
     }
   };
 
@@ -273,7 +296,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
             res,
             "Ошибка загрузки фото"
           );
-          toast.error(message);
+          showErrorToast(message);
         }
       } catch (err) {
         console.error(err);
@@ -281,7 +304,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
           err instanceof Error && err.message
             ? err.message
             : "Ошибка загрузки фото";
-        toast.error(message);
+        showErrorToast(message);
       }
     }
   };
@@ -321,7 +344,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
 
   const handleDeleteRestaurant = async () => {
     if (!activeTeam) {
-      toast.error("Заведение не выбрано");
+      showErrorToast("Заведение не выбрано");
       return;
     }
 
@@ -350,7 +373,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
       }
     } catch (error) {
       console.error(error);
-      toast.error("Не удалось удалить заведение");
+      showErrorToast("Не удалось удалить заведение");
     } finally {
       setDeleting(false);
     }
@@ -377,9 +400,25 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
     );
   }
 
+  const missingRestaurantFields = [
+    !data.city && "город",
+    !data.address && "адрес",
+    !data.phone && "телефон",
+    !data.hours && "время работы",
+  ].filter(Boolean) as string[];
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
       <h2 className="text-xl font-bold">Изменить данные</h2>
+      {missingRestaurantFields.length > 0 && (
+        <Alert className="border border-yellow-200 bg-yellow-50 text-yellow-900">
+          <AlertCircle className="size-4" />
+          <AlertTitle>Заполните обязательные поля</AlertTitle>
+          <AlertDescription>
+            Укажите: {missingRestaurantFields.join(", ")}
+          </AlertDescription>
+        </Alert>
+      )}
       <Card>
         <CardContent className="space-y-8 pt-6">
           {/* Основная информация */}

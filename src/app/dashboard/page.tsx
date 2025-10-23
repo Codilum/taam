@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useEffect, useState, ReactNode } from "react"
+import { Suspense, useEffect, useState, ReactNode, useCallback } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { AppSidebar } from "@/components/app-sidebar"
@@ -22,8 +22,8 @@ import ViewData from "@/components/dashboard/ViewData"
 import EditMenu from "@/components/dashboard/EditMenu"
 import EditData from "@/components/dashboard/EditData"
 import Subscription from "@/components/dashboard/Subscription"
+import Tariffs from "@/components/dashboard/Tariffs"
 import AccountSettings from "@/components/dashboard/AccountSettings"
-import PaymentHistory from "@/components/dashboard/PaymentHistory"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircleIcon } from "lucide-react"
@@ -38,6 +38,15 @@ type AccountData = {
   payment_method_number: string | null
   is_profile_complete: boolean
 }
+
+const dashboardBlocks = [
+  "view",
+  "edit-menu",
+  "edit-data",
+  "subscription",
+  "tariffs",
+  "account-settings",
+]
 
 function LoadingFallback() {
   return (
@@ -62,9 +71,9 @@ function DynamicBreadcrumb({
     view: "Просмотр данных",
     "edit-menu": "Изменить меню",
     "edit-data": "Изменить данные",
-    subscription: "Моя подписка",
+    subscription: "Подписка и история",
+    tariffs: "Тарифы",
     "account-settings": "Настройки аккаунта",
-    "payment-history": "История оплат",
   }
 
   const showRestaurantBreadcrumb = ["view", "edit-menu", "edit-data"].includes(
@@ -95,34 +104,66 @@ function DynamicBreadcrumb({
 function DashboardInner() {
   const [activeBlock, setActiveBlock] = useState("view")
   const [activeTeam, setActiveTeam] = useState<string>("")
-  const [teams, setTeams] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<AccountData | null>(null)
 
   const searchParams = useSearchParams()
   const router = useRouter()
 
+  const updateRoute = useCallback(
+    (teamId: string, block: string, method: "push" | "replace" = "push") => {
+      const safeBlock = dashboardBlocks.includes(block) ? block : "view"
+      const params = new URLSearchParams()
+      params.set("block", safeBlock)
+      if (teamId) {
+        params.set("team", teamId)
+      }
+      const url = `/dashboard?${params.toString()}`
+      if (method === "replace") {
+        router.replace(url)
+      } else {
+        router.push(url)
+      }
+    },
+    [router],
+  )
+
+  const goTo = useCallback(
+    (teamId: string, block: string, method: "push" | "replace" = "push") => {
+      const safeBlock = dashboardBlocks.includes(block) ? block : "view"
+      setActiveTeam(teamId)
+      setActiveBlock(safeBlock)
+      updateRoute(teamId, safeBlock, method)
+    },
+    [updateRoute],
+  )
+
+  const changeBlock = useCallback(
+    (block: string, method: "push" | "replace" = "push") => {
+      goTo(activeTeam, block, method)
+    },
+    [activeTeam, goTo],
+  )
+
+  const changeTeam = useCallback(
+    (teamId: string, method: "push" | "replace" = "push") => {
+      goTo(teamId, activeBlock, method)
+    },
+    [activeBlock, goTo],
+  )
+
   useEffect(() => {
-    // Синхронизация блока с параметром ?block=
-    const block = searchParams.get("block")
-    if (
-      block &&
-      [
-        "view",
-        "edit-menu",
-        "edit-data",
-        "subscription",
-        "account-settings",
-        "payment-history",
-      ].includes(block)
-    ) {
-      setActiveBlock(block)
-    } else {
+    const blockParam = searchParams.get("block")
+    if (!blockParam || !dashboardBlocks.includes(blockParam)) {
       setActiveBlock("view")
-      // Сбрасываем URL, чтобы убрать неверные query-параметры
-      router.replace("/dashboard")
+    } else {
+      setActiveBlock(blockParam)
     }
-  }, [searchParams, router])
+    const teamParam = searchParams.get("team")
+    if (teamParam) {
+      setActiveTeam(teamParam)
+    }
+  }, [searchParams])
 
   useEffect(() => {
     let cancelled = false
@@ -132,7 +173,6 @@ function DashboardInner() {
         const token = localStorage.getItem("access_token")
         if (!token) throw new Error("No token")
 
-        // Профиль
         const profileRes = await fetch("/api/me", {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -141,16 +181,36 @@ function DashboardInner() {
         const profileData: AccountData = await profileRes.json()
         if (!cancelled) setProfile(profileData)
 
-        // Рестораны
         const res = await fetch("/api/restaurants", {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         })
         if (!res.ok) throw new Error("Failed to fetch restaurants")
         const data = await res.json()
-        if (!cancelled) {
-          setTeams(data)
-          if (data.length > 0) setActiveTeam(String(data[0].id))
+        if (!cancelled && Array.isArray(data)) {
+          if (data.length > 0) {
+            const params =
+              typeof window !== "undefined"
+                ? new URLSearchParams(window.location.search)
+                : null
+            const blockParam = params?.get("block") || ""
+            const teamParam = params?.get("team") || ""
+            const safeBlock = dashboardBlocks.includes(blockParam)
+              ? blockParam
+              : "view"
+            const hasTeam = data.some(
+              (item: any) => String(item.id) === teamParam,
+            )
+            const nextTeam = hasTeam ? teamParam : String(data[0].id)
+            if (!teamParam || !hasTeam || !dashboardBlocks.includes(blockParam)) {
+              goTo(nextTeam, safeBlock, "replace")
+            } else {
+              setActiveTeam(nextTeam)
+              setActiveBlock(safeBlock)
+            }
+          } else {
+            setActiveTeam("")
+          }
         }
       } catch (err) {
         console.error(err)
@@ -162,15 +222,28 @@ function DashboardInner() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [goTo])
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ block?: string; team?: string }>
+      const detail = customEvent.detail || {}
+      const nextBlock = detail.block || activeBlock
+      const nextTeam = detail.team || activeTeam
+      goTo(nextTeam, nextBlock)
+    }
+    window.addEventListener("dashboard:navigate", handler as EventListener)
+    return () =>
+      window.removeEventListener("dashboard:navigate", handler as EventListener)
+  }, [activeBlock, activeTeam, goTo])
 
   const blockComponents: { [key: string]: ReactNode } = {
     view: <ViewData activeTeam={activeTeam} />,
     "edit-menu": <EditMenu activeTeam={activeTeam} />,
     "edit-data": <EditData activeTeam={activeTeam} />,
     subscription: <Subscription activeTeam={activeTeam} />,
+    tariffs: <Tariffs activeTeam={activeTeam} />,
     "account-settings": <AccountSettings activeTeam={activeTeam} />,
-    "payment-history": <PaymentHistory activeTeam={activeTeam} />,
   }
 
   if (loading) {
@@ -185,9 +258,9 @@ function DashboardInner() {
     return (
       <SidebarProvider>
         <AppSidebar
-          setActiveBlock={setActiveBlock}
+          setActiveBlock={changeBlock}
           activeTeam={activeTeam}
-          setActiveTeam={setActiveTeam}
+          setActiveTeam={changeTeam}
         />
         <SidebarInset>
           <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
@@ -221,9 +294,9 @@ function DashboardInner() {
   return (
     <SidebarProvider>
       <AppSidebar
-        setActiveBlock={setActiveBlock}
+        setActiveBlock={changeBlock}
         activeTeam={activeTeam}
-        setActiveTeam={setActiveTeam}
+        setActiveTeam={changeTeam}
       />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">

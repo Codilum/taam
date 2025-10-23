@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import { showErrorToast } from "@/lib/show-error-toast"
 
 const parseUploadError = async (res: Response, fallback: string) => {
   try {
@@ -105,7 +106,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
         setLoading(false)
       } catch (error) {
         console.error("Ошибка загрузки профиля:", error)
-        toast.error("Ошибка загрузки профиля")
+        showErrorToast("Ошибка загрузки профиля")
         setLoading(false)
       }
     }
@@ -197,7 +198,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
         error instanceof Error && error.message
           ? error.message
           : "Не удалось обновить данные профиля"
-      toast.error(message)
+      showErrorToast(message)
     } finally {
       setUploadingPhoto(false)
     }
@@ -217,7 +218,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
       window.location.href = "/login"
       toast.success("Аккаунт удалён")
     } catch (error) {
-      toast.error("Не удалось удалить аккаунт")
+      showErrorToast("Не удалось удалить аккаунт")
     }
   }
 

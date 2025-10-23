@@ -43,6 +43,7 @@ interface RestaurantData {
   phone: string | null
   subdomain: string | null
   type: string | null
+  qr_code?: string | null
   subscription?: {
     plan_code: string | null
     plan_name: string | null
@@ -140,7 +141,6 @@ export function AppSidebar({
   // Обработчик клика по пункту меню
   const handleNavClick = (block: string) => {
     setActiveBlock(block)
-    console.log(isMobile)
     if (isMobile) {
       setOpen(false) // 👈 закрыть панель на мобиле
     }
@@ -165,8 +165,8 @@ export function AppSidebar({
         url: "subscription",
         icon: Settings2,
         items: [
-          { title: "Моя подписка", url: "subscription" },
-          { title: "История оплат", url: "payment-history" },
+          { title: "Подписка и история", url: "subscription" },
+          { title: "Тарифы", url: "tariffs" },
         ],
       },
     ],
@@ -194,11 +194,11 @@ export function AppSidebar({
       <SidebarFooter>
         <div className="p-1 w-full">
           <QrCard
-            qrSrc="/qr-code.png"
+            qrSrc={restaurantData?.qr_code || undefined}
             qrLink={
               restaurantData?.subdomain
                 ? `https://${restaurantData.subdomain}.taam.menu`
-                : "#"
+                : ""
             }
             className="w-full"
             collapsed={qrCollapsed}

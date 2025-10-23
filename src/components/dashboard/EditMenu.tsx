@@ -25,6 +25,7 @@ import {
   DragDropContext, Droppable, Draggable, DropResult
 } from "@hello-pangea/dnd";
 import { Skeleton } from "@/components/ui/skeleton";
+import { showErrorToast } from "@/lib/show-error-toast";
 
 interface MenuCategory {
   id: number;
@@ -172,11 +173,11 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
           setCategories(allCategories);
           setItems(allItems);
         } else {
-          toast.error("Ошибка загрузки меню");
+          showErrorToast("Ошибка загрузки меню");
         }
       } catch (error) {
         console.error("Ошибка:", error);
-        toast.error("Ошибка загрузки меню");
+        showErrorToast("Ошибка загрузки меню");
       } finally {
         setIsLoading(false);
       }
@@ -221,11 +222,11 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
           res,
           "Ошибка при создании категории"
         );
-        toast.error(message);
+        showErrorToast(message);
         return;
       }
     } catch (error) {
-      toast.error("Ошибка при создании категории");
+      showErrorToast("Ошибка при создании категории");
     }
   };
 
@@ -253,7 +254,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         toast.success("Категория обновлена");
       }
     } catch (error) {
-      toast.error("Ошибка при обновлении категории");
+      showErrorToast("Ошибка при обновлении категории");
     }
   };
 
@@ -276,21 +277,21 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         toast.success("Категория удалена");
       }
     } catch (error) {
-      toast.error("Ошибка при удалении категории");
+      showErrorToast("Ошибка при удалении категории");
     }
   };
 
   const handleImportSubmit = async () => {
     if (!activeTeam) {
-      toast.error("Выберите заведение");
+      showErrorToast("Выберите заведение");
       return;
     }
     if (!importCategoryId) {
-      toast.error("Выберите категорию для импорта");
+      showErrorToast("Выберите категорию для импорта");
       return;
     }
     if (!importFile) {
-      toast.error("Выберите CSV файл");
+      showErrorToast("Выберите CSV файл");
       return;
     }
 
@@ -357,7 +358,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       }
     } catch (error: any) {
       console.error("Ошибка импорта CSV:", error);
-      toast.error(error?.message || "Ошибка импорта CSV");
+      showErrorToast(error?.message || "Ошибка импорта CSV");
     } finally {
       setIsImporting(false);
     }
@@ -432,7 +433,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
             res,
             "Не удалось обновить блюдо"
           );
-          toast.error(message);
+          showErrorToast(message);
           return;
         }
       } else if (editingCategory) {
@@ -497,7 +498,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
             res,
             "Не удалось создать блюдо"
           );
-          toast.error(message);
+          showErrorToast(message);
           return;
         }
       }
@@ -509,7 +510,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         error instanceof Error && error.message
           ? error.message
           : "Ошибка при сохранении блюда";
-      toast.error(message);
+      showErrorToast(message);
     }
   };
 
@@ -531,7 +532,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         toast.success("Блюдо удалено");
       }
     } catch (error) {
-      toast.error("Ошибка при удалении блюда");
+      showErrorToast("Ошибка при удалении блюда");
     }
   };
 
@@ -557,7 +558,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         toast.success("Видимость блюда изменена");
       }
     } catch (error) {
-      toast.error("Ошибка при изменении видимости");
+      showErrorToast("Ошибка при изменении видимости");
     }
   };
 
@@ -597,7 +598,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       );
       toast.success("Порядок категорий сохранен");
     } catch (error) {
-      toast.error("Ошибка при сохранении порядка категорий");
+      showErrorToast("Ошибка при сохранении порядка категорий");
       // В случае ошибки возвращаем предыдущее состояние
       setCategories(categories);
     }
@@ -645,7 +646,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       );
       toast.success("Порядок блюд сохранен");
     } catch (error) {
-      toast.error("Ошибка при сохранении порядка блюд");
+      showErrorToast("Ошибка при сохранении порядка блюд");
       // В случае ошибки возвращаем предыдущее состояние
       setItems(items);
     }
@@ -1238,7 +1239,7 @@ function ItemForm({
           error instanceof Error && error.message
             ? error.message
             : "Ошибка загрузки фото";
-        toast.error(message);
+        showErrorToast(message);
         return;
       }
     }
