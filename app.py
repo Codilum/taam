@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
@@ -14,9 +14,13 @@ import os
 from pathlib import Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 import json
 import csv
 from io import StringIO
+from uuid import uuid4
+
+from yookassa import Configuration, Payment
 
 security = HTTPBearer()
 
@@ -32,6 +36,76 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 DEFAULT_MENU_ITEM_PHOTO = "https://cdn0.iconfinder.com/data/icons/iconic-kitchen-stuffs-3/64/Kitchen_line_icon_-_expand_-_62px_Tudung_Saji-1024.png"
+
+
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://app.taam.menu/dashboard?block=subscription")
+
+if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
+    Configuration.account_id = YOOKASSA_SHOP_ID
+    Configuration.secret_key = YOOKASSA_SECRET_KEY
+
+
+def format_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+SUBSCRIPTION_PLANS_DATA = [
+    {
+        "code": "base",
+        "name": "Базовая",
+        "description": "До 3 категорий меню и до 5 блюд в каждой категории.",
+        "price": 0,
+        "currency": "RUB",
+        "duration_days": 30,
+        "category_limit": 3,
+        "item_limit": 5,
+        "is_full_access": False,
+        "is_trial": False,
+        "features": [
+            "До 3 категорий меню",
+            "До 5 блюд в каждой категории",
+            "Можно перейти на премиум в любой момент",
+        ],
+    },
+    {
+        "code": "trial",
+        "name": "Пробная",
+        "description": "Полный доступ на 3 дня.",
+        "price": 100,
+        "currency": "RUB",
+        "duration_days": 3,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": True,
+        "features": [
+            "Полный доступ без ограничений",
+            "Работает 3 дня",
+            "Стоимость 1 ₽",
+        ],
+    },
+    {
+        "code": "premium",
+        "name": "Премиум",
+        "description": "Полный доступ на месяц.",
+        "price": 299900,
+        "currency": "RUB",
+        "duration_days": 30,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": False,
+        "features": [
+            "Без ограничений по категориям",
+            "Без ограничений по блюдам",
+            "Поддержка приоритетного уровня",
+        ],
+    },
+]
 
 
 def delete_uploaded_file(filename: Optional[str]) -> None:
@@ -110,6 +184,11 @@ app.add_middleware(
 )
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+
+@app.exception_handler(413)
+async def request_entity_too_large_handler(request: Request, exc):
+    return JSONResponse(status_code=413, content={"detail": "Файл слишком большой"})
+
 # === Хэширование пароля ===
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -186,8 +265,446 @@ def init_db():
             FOREIGN KEY (category_id) REFERENCES menu_categories (id) ON DELETE CASCADE
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS subscription_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT,
+            price INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'RUB',
+            duration_days INTEGER,
+            category_limit INTEGER,
+            item_limit INTEGER,
+            is_full_access BOOLEAN NOT NULL DEFAULT 0,
+            is_trial BOOLEAN NOT NULL DEFAULT 0,
+            features TEXT
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS restaurant_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            plan_code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            expires_at TEXT,
+            payment_id TEXT,
+            amount INTEGER,
+            currency TEXT,
+            FOREIGN KEY (restaurant_id) REFERENCES restaurants (id) ON DELETE CASCADE,
+            FOREIGN KEY (plan_code) REFERENCES subscription_plans (code) ON DELETE CASCADE
+        )
+    ''')
     conn.commit()
     conn.close()
+
+
+def sync_subscription_plans():
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    for plan in SUBSCRIPTION_PLANS_DATA:
+        c.execute(
+            """
+            INSERT INTO subscription_plans (code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                price = excluded.price,
+                currency = excluded.currency,
+                duration_days = excluded.duration_days,
+                category_limit = excluded.category_limit,
+                item_limit = excluded.item_limit,
+                is_full_access = excluded.is_full_access,
+                is_trial = excluded.is_trial,
+                features = excluded.features
+            """,
+            (
+                plan["code"],
+                plan["name"],
+                plan.get("description"),
+                plan.get("price", 0),
+                plan.get("currency", "RUB"),
+                plan.get("duration_days"),
+                plan.get("category_limit"),
+                plan.get("item_limit"),
+                int(bool(plan.get("is_full_access"))),
+                int(bool(plan.get("is_trial"))),
+                json.dumps(plan.get("features", [])),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def cleanup_expired_subscriptions():
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        UPDATE restaurant_subscriptions
+        SET status = 'expired'
+        WHERE status = 'active'
+          AND expires_at IS NOT NULL
+          AND datetime(expires_at) < datetime('now')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_subscription_plan_by_code(code: str) -> Optional[dict]:
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features
+        FROM subscription_plans
+        WHERE code = ?
+        """,
+        (code,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "code": row[0],
+        "name": row[1],
+        "description": row[2],
+        "price": row[3],
+        "currency": row[4],
+        "duration_days": row[5],
+        "category_limit": row[6],
+        "item_limit": row[7],
+        "is_full_access": bool(row[8]),
+        "is_trial": bool(row[9]),
+        "features": json.loads(row[10]) if row[10] else [],
+    }
+
+
+def list_subscription_plans() -> list[dict]:
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features
+        FROM subscription_plans
+        ORDER BY id ASC
+        """
+    )
+    rows = c.fetchall()
+    conn.close()
+    plans: list[dict] = []
+    for row in rows:
+        plans.append({
+            "code": row[0],
+            "name": row[1],
+            "description": row[2],
+            "price": row[3],
+            "currency": row[4],
+            "duration_days": row[5],
+            "category_limit": row[6],
+            "item_limit": row[7],
+            "is_full_access": bool(row[8]),
+            "is_trial": bool(row[9]),
+            "features": json.loads(row[10]) if row[10] else [],
+        })
+    return plans
+
+
+def create_subscription_record(
+    restaurant_id: int,
+    plan_code: str,
+    status: str,
+    amount: int,
+    currency: str,
+    payment_id: Optional[str] = None,
+    started_at: Optional[datetime] = None,
+    expires_at: Optional[datetime] = None,
+) -> int:
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    created_at = datetime.utcnow()
+    c.execute(
+        """
+        INSERT INTO restaurant_subscriptions (restaurant_id, plan_code, status, created_at, started_at, expires_at, payment_id, amount, currency)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            restaurant_id,
+            plan_code,
+            status,
+            format_datetime(created_at),
+            format_datetime(started_at),
+            format_datetime(expires_at),
+            payment_id,
+            amount,
+            currency,
+        ),
+    )
+    subscription_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return subscription_id
+
+
+def set_subscription_active(
+    subscription_id: int,
+    restaurant_id: int,
+    plan: dict,
+    amount: int,
+    currency: str,
+    payment_id: Optional[str] = None,
+):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "UPDATE restaurant_subscriptions SET status = 'expired' WHERE restaurant_id = ? AND status = 'active' AND id != ?",
+        (restaurant_id, subscription_id),
+    )
+    started = datetime.utcnow()
+    expires = None
+    if plan.get("duration_days"):
+        expires = started + timedelta(days=int(plan["duration_days"]))
+    c.execute(
+        """
+        UPDATE restaurant_subscriptions
+        SET status = 'active',
+            started_at = ?,
+            expires_at = ?,
+            amount = ?,
+            currency = ?,
+            payment_id = ?
+        WHERE id = ?
+        """,
+        (
+            format_datetime(started),
+            format_datetime(expires),
+            amount,
+            currency,
+            payment_id,
+            subscription_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def ensure_trial_for_restaurant(restaurant_id: int):
+    plan = get_subscription_plan_by_code("trial")
+    if not plan:
+        return
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT id FROM restaurant_subscriptions WHERE restaurant_id = ? LIMIT 1",
+        (restaurant_id,),
+    )
+    exists = c.fetchone()
+    conn.close()
+    if exists:
+        return
+    started = datetime.utcnow()
+    expires = None
+    if plan.get("duration_days"):
+        expires = started + timedelta(days=int(plan["duration_days"]))
+    create_subscription_record(
+        restaurant_id=restaurant_id,
+        plan_code=plan["code"],
+        status="active",
+        amount=0,
+        currency=plan.get("currency", "RUB"),
+        started_at=started,
+        expires_at=expires,
+    )
+
+
+def ensure_trials_for_existing_restaurants():
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM restaurants")
+    restaurant_ids = [row[0] for row in c.fetchall()]
+    conn.close()
+    for restaurant_id in restaurant_ids:
+        ensure_trial_for_restaurant(restaurant_id)
+
+
+def get_active_subscription(restaurant_id: int) -> Optional[dict]:
+    cleanup_expired_subscriptions()
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT rs.id, rs.plan_code, rs.status, rs.created_at, rs.started_at, rs.expires_at, rs.payment_id, rs.amount, rs.currency,
+               sp.name, sp.description, sp.price, sp.currency, sp.duration_days, sp.category_limit, sp.item_limit, sp.is_full_access, sp.is_trial, sp.features
+        FROM restaurant_subscriptions rs
+        JOIN subscription_plans sp ON sp.code = rs.plan_code
+        WHERE rs.restaurant_id = ? AND rs.status = 'active'
+        ORDER BY datetime(COALESCE(rs.expires_at, '9999-12-31 23:59:59')) DESC, rs.id DESC
+        LIMIT 1
+        """,
+        (restaurant_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "plan_code": row[1],
+        "status": row[2],
+        "created_at": row[3],
+        "started_at": row[4],
+        "expires_at": row[5],
+        "payment_id": row[6],
+        "amount": row[7],
+        "currency": row[8],
+        "plan": {
+            "name": row[9],
+            "description": row[10],
+            "price": row[11],
+            "currency": row[12],
+            "duration_days": row[13],
+            "category_limit": row[14],
+            "item_limit": row[15],
+            "is_full_access": bool(row[16]),
+            "is_trial": bool(row[17]),
+            "features": json.loads(row[18]) if row[18] else [],
+        },
+    }
+
+
+def get_latest_subscription(restaurant_id: int) -> Optional[dict]:
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT rs.id, rs.plan_code, rs.status, rs.created_at, rs.started_at, rs.expires_at, rs.payment_id, rs.amount, rs.currency,
+               sp.name, sp.description, sp.price, sp.currency, sp.duration_days, sp.category_limit, sp.item_limit, sp.is_full_access, sp.is_trial, sp.features
+        FROM restaurant_subscriptions rs
+        JOIN subscription_plans sp ON sp.code = rs.plan_code
+        WHERE rs.restaurant_id = ?
+        ORDER BY datetime(rs.created_at) DESC, rs.id DESC
+        LIMIT 1
+        """,
+        (restaurant_id,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "plan_code": row[1],
+        "status": row[2],
+        "created_at": row[3],
+        "started_at": row[4],
+        "expires_at": row[5],
+        "payment_id": row[6],
+        "amount": row[7],
+        "currency": row[8],
+        "plan": {
+            "name": row[9],
+            "description": row[10],
+            "price": row[11],
+            "currency": row[12],
+            "duration_days": row[13],
+            "category_limit": row[14],
+            "item_limit": row[15],
+            "is_full_access": bool(row[16]),
+            "is_trial": bool(row[17]),
+            "features": json.loads(row[18]) if row[18] else [],
+        },
+    }
+
+
+def get_subscription_limits(restaurant_id: int) -> dict:
+    active = get_active_subscription(restaurant_id)
+    if active:
+        plan = active["plan"]
+        if plan.get("is_full_access"):
+            return {"category_limit": None, "item_limit": None}
+        return {
+            "category_limit": plan.get("category_limit"),
+            "item_limit": plan.get("item_limit"),
+        }
+    # Без подписки действует базовое ограничение
+    return {"category_limit": 3, "item_limit": 5}
+
+
+def list_restaurant_subscriptions(restaurant_id: int) -> list[dict]:
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT rs.id, rs.plan_code, rs.status, rs.created_at, rs.started_at, rs.expires_at, rs.payment_id, rs.amount, rs.currency,
+               sp.name, sp.duration_days, sp.is_full_access
+        FROM restaurant_subscriptions rs
+        JOIN subscription_plans sp ON sp.code = rs.plan_code
+        WHERE rs.restaurant_id = ?
+        ORDER BY datetime(rs.created_at) DESC, rs.id DESC
+        """,
+        (restaurant_id,),
+    )
+    rows = c.fetchall()
+    conn.close()
+    history: list[dict] = []
+    for row in rows:
+        amount_value = row[7] if row[7] is not None else 0
+        history.append({
+            "id": row[0],
+            "plan_code": row[1],
+            "status": row[2],
+            "created_at": row[3],
+            "started_at": row[4],
+            "expires_at": row[5],
+            "payment_id": row[6],
+            "amount_minor": amount_value,
+            "amount": (amount_value or 0) / 100 if amount_value else 0,
+            "currency": row[8] or "RUB",
+            "plan_name": row[9],
+            "duration_days": row[10],
+            "is_full_access": bool(row[11]),
+        })
+    return history
+
+
+def format_subscription_payload(subscription: Optional[dict]) -> Optional[dict]:
+    if not subscription:
+        return None
+    amount_minor = subscription.get("amount") or 0
+    plan = subscription.get("plan", {})
+    currency = subscription.get("currency") or plan.get("currency", "RUB")
+    return {
+        "plan_code": subscription.get("plan_code"),
+        "plan_name": plan.get("name"),
+        "status": subscription.get("status"),
+        "started_at": subscription.get("started_at"),
+        "expires_at": subscription.get("expires_at"),
+        "amount": (amount_minor or 0) / 100 if amount_minor else 0,
+        "currency": currency,
+    }
+
+
+def format_plan_response(plan: dict) -> dict:
+    price_minor = plan.get("price") or 0
+    return {
+        "code": plan.get("code"),
+        "name": plan.get("name"),
+        "description": plan.get("description"),
+        "price": price_minor / 100 if price_minor else 0,
+        "price_minor": price_minor,
+        "currency": plan.get("currency", "RUB"),
+        "duration_days": plan.get("duration_days"),
+        "category_limit": plan.get("category_limit"),
+        "item_limit": plan.get("item_limit"),
+        "is_full_access": plan.get("is_full_access"),
+        "is_trial": plan.get("is_trial"),
+        "features": plan.get("features", []),
+    }
 
 def migrate_db():
     conn = sqlite3.connect("users.db")
@@ -204,6 +721,9 @@ def migrate_db():
 # Вызовите миграцию перед инициализацией базы
 migrate_db()
 init_db()
+sync_subscription_plans()
+cleanup_expired_subscriptions()
+ensure_trials_for_existing_restaurants()
 
 
 def build_photo_url(photo_value: Optional[str]) -> Optional[str]:
@@ -231,6 +751,16 @@ def format_menu_item_row(row: tuple) -> "MenuItem":
     )
 
 
+class RestaurantSubscriptionInfo(BaseModel):
+    plan_code: str
+    plan_name: str
+    status: str
+    started_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+
+
 class Restaurant(BaseModel):
     id: int
     photo: Optional[str] = None
@@ -247,6 +777,7 @@ class Restaurant(BaseModel):
     type: Optional[str] = None
     phone: Optional[str] = None
     subdomain: Optional[str] = None
+    subscription: Optional[RestaurantSubscriptionInfo] = None
 
 class CreateRestaurantRequest(BaseModel):
     name: str
@@ -333,8 +864,17 @@ class UpdateMenuItemRequest(BaseModel):
     fats: Optional[float] = None
     carbs: Optional[float] = None
     weight: Optional[float] = None
-    view: Optional[bool] = None 
+    view: Optional[bool] = None
     placenum: Optional[int] = None
+
+
+class CreateSubscriptionRequest(BaseModel):
+    plan_code: str
+    return_url: Optional[str] = None
+
+
+class RefreshSubscriptionRequest(BaseModel):
+    payment_id: str
 
 # === Модели (остальные без изменений) ===
 class RegisterRequest(BaseModel):
@@ -805,6 +1345,7 @@ def create_restaurant(req: CreateRestaurantRequest, current_user: dict = Depends
     restaurant_id = c.lastrowid
     conn.commit()
     conn.close()
+    ensure_trial_for_restaurant(restaurant_id)
     return get_restaurant(restaurant_id)
 
 
@@ -823,11 +1364,13 @@ def get_user_restaurants(current_user: dict = Depends(get_current_user)):
     for row in rows:
         features = json.loads(row[11]) if row[11] else []
         photo_url = f"/uploads/{row[1]}" if row[1] else None
+        subscription = get_active_subscription(row[0]) or get_latest_subscription(row[0])
         restaurants.append({
             "id": row[0], "photo": photo_url, "name": row[2], "description": row[3],
             "city": row[4], "address": row[5], "hours": row[6],
             "instagram": row[7], "telegram": row[8], "vk": row[9], "whatsapp": row[10],
-            "features": features, "type": row[12], "phone": row[13], "subdomain": row[14]
+            "features": features, "type": row[12], "phone": row[13], "subdomain": row[14],
+            "subscription": format_subscription_payload(subscription)
         })
     return restaurants
 @app.get("/api/restaurants/{restaurant_id}", response_model=Restaurant)
@@ -849,6 +1392,7 @@ def get_restaurant(restaurant_id: int):
     
     features = json.loads(row[11]) if row[11] else []
     photo_url = f"/uploads/{row[1]}" if row[1] else None
+    subscription = get_active_subscription(row[0]) or get_latest_subscription(row[0])
 
     return {
         "id": row[0],
@@ -865,7 +1409,8 @@ def get_restaurant(restaurant_id: int):
         "features": features,
         "type": row[12],
         "phone": row[13],
-        "subdomain": row[14]
+        "subdomain": row[14],
+        "subscription": format_subscription_payload(subscription),
     }
 
 
@@ -1053,7 +1598,20 @@ def create_menu_category(restaurant_id: int, req: CreateMenuCategoryRequest, cur
     if not c.fetchone():
         conn.close()
         raise HTTPException(404, "Заведение не найдено")
-    
+
+    limits = get_subscription_limits(restaurant_id)
+    category_limit = limits.get("category_limit")
+    if category_limit is not None:
+        c.execute("SELECT COUNT(*) FROM menu_categories WHERE restaurant_id = ?", (restaurant_id,))
+        count_row = c.fetchone()
+        existing_count = count_row[0] if count_row else 0
+        if existing_count >= category_limit:
+            conn.close()
+            raise HTTPException(
+                status_code=403,
+                detail="Достигнут лимит категорий для текущей подписки. Оформите подписку с полным доступом, чтобы добавить больше категорий.",
+            )
+
     description = req.description
     if description is None:
         for cat in MENU_CATEGORIES:
@@ -1356,6 +1914,19 @@ async def create_menu_item(
         conn.close()
         raise HTTPException(404, "Категория не найдена")
 
+    limits = get_subscription_limits(restaurant_id)
+    item_limit = limits.get("item_limit")
+    if item_limit is not None:
+        c.execute("SELECT COUNT(*) FROM menu_items WHERE category_id = ?", (category_id,))
+        count_row = c.fetchone()
+        existing_items = count_row[0] if count_row else 0
+        if existing_items >= item_limit:
+            conn.close()
+            raise HTTPException(
+                status_code=403,
+                detail="Достигнут лимит блюд в этой категории. Оформите премиум подписку, чтобы добавить больше блюд.",
+            )
+
     if placenum is None:
         c.execute("SELECT MAX(placenum) FROM menu_items WHERE category_id = ?", (category_id,))
         max_placenum = c.fetchone()[0] or 0
@@ -1493,6 +2064,13 @@ async def import_menu_items_from_csv(
         conn.close()
         raise HTTPException(404, "Категория не найдена")
 
+    limits = get_subscription_limits(restaurant_id)
+    item_limit = limits.get("item_limit")
+    c.execute("SELECT COUNT(*) FROM menu_items WHERE category_id = ?", (category_id,))
+    count_row = c.fetchone()
+    existing_items = count_row[0] if count_row else 0
+    current_items = existing_items
+
     c.execute("SELECT MAX(placenum) FROM menu_items WHERE category_id = ?", (category_id,))
     max_placenum_row = c.fetchone()
     next_placenum = (max_placenum_row[0] or 0) if max_placenum_row else 0
@@ -1619,6 +2197,9 @@ async def import_menu_items_from_csv(
                 )
             updated += 1
         else:
+            if item_limit is not None and current_items >= item_limit:
+                errors.append(f"Строка {index}: превышен лимит блюд для текущей подписки")
+                continue
             next_placenum += 1
             c.execute(
                 """
@@ -1641,6 +2222,7 @@ async def import_menu_items_from_csv(
                 ),
             )
             created += 1
+            current_items += 1
 
     conn.commit()
 
@@ -1755,8 +2337,8 @@ def update_menu_item(
 
 @app.delete("/api/restaurants/{restaurant_id}/menu-items/{item_id}")
 def delete_menu_item(
-    restaurant_id: int, 
-    item_id: int, 
+    restaurant_id: int,
+    item_id: int,
     current_user: dict = Depends(get_current_user)
 ):
     conn = sqlite3.connect("users.db")
@@ -1785,6 +2367,219 @@ def delete_menu_item(
     conn.close()
 
     return {"message": "Блюдо удалено"}
+
+
+@app.get("/api/subscriptions/plans")
+def get_subscription_plans(current_user: dict = Depends(get_current_user)):
+    plans = [format_plan_response(plan) for plan in list_subscription_plans()]
+    return {"plans": plans}
+
+
+def ensure_restaurant_access(restaurant_id: int, owner_email: str):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, owner_email))
+    exists = c.fetchone()
+    conn.close()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Заведение не найдено")
+
+
+@app.get("/api/restaurants/{restaurant_id}/subscription")
+def get_restaurant_subscription(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+    subscription = get_active_subscription(restaurant_id) or get_latest_subscription(restaurant_id)
+    return {
+        "subscription": format_subscription_payload(subscription),
+        "limits": get_subscription_limits(restaurant_id),
+    }
+
+
+@app.get("/api/restaurants/{restaurant_id}/subscription/history")
+def get_restaurant_subscription_history(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+    history = list_restaurant_subscriptions(restaurant_id)
+    return {"history": history}
+
+
+@app.post("/api/restaurants/{restaurant_id}/subscription")
+def create_restaurant_subscription(
+    restaurant_id: int,
+    req: CreateSubscriptionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    plan_code = req.plan_code.strip().lower()
+    plan = get_subscription_plan_by_code(plan_code)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT id FROM restaurant_subscriptions WHERE restaurant_id = ? AND status = 'pending'",
+        (restaurant_id,),
+    )
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="У вас уже есть неоплаченная подписка. Завершите оплату или обновите статус.")
+    conn.close()
+
+    active = get_active_subscription(restaurant_id)
+    if plan.get("is_trial") and active and active.get("plan_code") == plan_code:
+        raise HTTPException(status_code=400, detail="Пробная подписка уже активна")
+
+    amount_minor = plan.get("price", 0) or 0
+    currency = plan.get("currency", "RUB")
+
+    if amount_minor <= 0:
+        subscription_id = create_subscription_record(
+            restaurant_id=restaurant_id,
+            plan_code=plan_code,
+            status="pending",
+            amount=amount_minor,
+            currency=currency,
+        )
+        set_subscription_active(
+            subscription_id=subscription_id,
+            restaurant_id=restaurant_id,
+            plan=plan,
+            amount=amount_minor,
+            currency=currency,
+        )
+        subscription = get_active_subscription(restaurant_id)
+        return {
+            "status": "active",
+            "subscription": format_subscription_payload(subscription),
+            "limits": get_subscription_limits(restaurant_id),
+        }
+
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+        raise HTTPException(status_code=500, detail="Платежный сервис временно недоступен")
+
+    try:
+        payment = Payment.create(
+            {
+                "amount": {"value": "{:.2f}".format(amount_minor / 100), "currency": currency},
+                "description": f"Подписка {plan['name']} для заведения #{restaurant_id}",
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": req.return_url or YOOKASSA_RETURN_URL,
+                },
+                "capture": True,
+                "metadata": {
+                    "restaurant_id": restaurant_id,
+                    "plan_code": plan_code,
+                },
+            },
+            uuid4().hex,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Не удалось создать платеж") from exc
+
+    subscription_id = create_subscription_record(
+        restaurant_id=restaurant_id,
+        plan_code=plan_code,
+        status="pending",
+        amount=amount_minor,
+        currency=currency,
+        payment_id=payment.id,
+    )
+
+    confirmation_url = None
+    if getattr(payment, "confirmation", None):
+        confirmation_url = getattr(payment.confirmation, "confirmation_url", None)
+
+    return {
+        "status": "pending",
+        "payment_id": payment.id,
+        "subscription_id": subscription_id,
+        "confirmation_url": confirmation_url,
+    }
+
+
+@app.post("/api/restaurants/{restaurant_id}/subscription/refresh")
+def refresh_restaurant_subscription(
+    restaurant_id: int,
+    req: RefreshSubscriptionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+    if not req.payment_id:
+        raise HTTPException(status_code=400, detail="Не указан идентификатор платежа")
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT id, plan_code, amount, currency, status
+        FROM restaurant_subscriptions
+        WHERE restaurant_id = ? AND payment_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (restaurant_id, req.payment_id),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Платеж не найден")
+
+    subscription_id, plan_code, amount_minor, currency, status = row
+    if status == "active":
+        conn.close()
+        subscription = get_active_subscription(restaurant_id)
+        return {
+            "status": "active",
+            "subscription": format_subscription_payload(subscription),
+            "limits": get_subscription_limits(restaurant_id),
+        }
+
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+        conn.close()
+        raise HTTPException(status_code=500, detail="Платежный сервис временно недоступен")
+
+    try:
+        payment = Payment.find_one(req.payment_id)
+    except Exception as exc:
+        conn.close()
+        raise HTTPException(status_code=502, detail="Не удалось получить статус платежа") from exc
+
+    payment_status = getattr(payment, "status", None)
+
+    if payment_status == "succeeded":
+        plan = get_subscription_plan_by_code(plan_code)
+        if not plan:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Тариф не найден")
+        conn.close()
+        set_subscription_active(
+            subscription_id=subscription_id,
+            restaurant_id=restaurant_id,
+            plan=plan,
+            amount=amount_minor or plan.get("price", 0) or 0,
+            currency=currency or plan.get("currency", "RUB"),
+            payment_id=req.payment_id,
+        )
+        subscription = get_active_subscription(restaurant_id)
+        return {
+            "status": "active",
+            "subscription": format_subscription_payload(subscription),
+            "limits": get_subscription_limits(restaurant_id),
+        }
+
+    if payment_status == "canceled":
+        c.execute(
+            "UPDATE restaurant_subscriptions SET status = 'canceled' WHERE id = ?",
+            (subscription_id,),
+        )
+        conn.commit()
+        conn.close()
+        return {"status": "canceled"}
+
+    conn.close()
+    return {"status": payment_status or "pending"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8003)
