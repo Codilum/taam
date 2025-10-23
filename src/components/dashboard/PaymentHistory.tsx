@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2 } from "lucide-react"
 import { toast } from "sonner"
+import { showErrorToast } from "@/lib/show-error-toast"
 
 type HistoryEntry = {
   id: number
@@ -100,7 +101,7 @@ export default function PaymentHistory({ activeTeam }: { activeTeam: string }) {
         if (!res.ok) {
           if (!cancelled) {
             const message = data?.detail || data?.message || raw || "Не удалось загрузить историю"
-            toast.error(message)
+            showErrorToast(message)
           }
           return
         }
@@ -110,7 +111,7 @@ export default function PaymentHistory({ activeTeam }: { activeTeam: string }) {
       } catch (error) {
         console.error(error)
         if (!cancelled) {
-          toast.error("Не удалось загрузить историю подписок")
+          showErrorToast("Не удалось загрузить историю подписок")
         }
       } finally {
         if (!cancelled) setLoading(false)

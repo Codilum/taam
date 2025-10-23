@@ -12,6 +12,7 @@ import uvicorn
 import sqlite3
 import os
 from pathlib import Path
+import qrcode
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -57,10 +58,10 @@ SUBSCRIPTION_PLANS_DATA = [
     {
         "code": "base",
         "name": "Базовая",
-        "description": "До 3 категорий меню и до 5 блюд в каждой категории.",
+        "description": "Стартовый тариф без оплаты.",
         "price": 0,
         "currency": "RUB",
-        "duration_days": 30,
+        "duration_days": None,
         "category_limit": 3,
         "item_limit": 5,
         "is_full_access": False,
@@ -119,6 +120,40 @@ def delete_uploaded_file(filename: Optional[str]) -> None:
             file_path.unlink()
         except OSError:
             pass
+
+
+def _qr_file_path(restaurant_id: int) -> Path:
+    return UPLOAD_DIR / f"qr_{restaurant_id}.png"
+
+
+def generate_qr_for_restaurant(restaurant_id: int, subdomain: str) -> None:
+    link = subdomain.strip()
+    if not link:
+        remove_qr_for_restaurant(restaurant_id)
+        return
+    full_link = f"https://{link}.taam.menu"
+    qr = qrcode.QRCode(version=3, box_size=8, border=4)
+    qr.add_data(full_link)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    path = _qr_file_path(restaurant_id)
+    image.save(path)
+
+
+def remove_qr_for_restaurant(restaurant_id: int) -> None:
+    path = _qr_file_path(restaurant_id)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def get_qr_url(restaurant_id: int) -> Optional[str]:
+    path = _qr_file_path(restaurant_id)
+    if path.exists():
+        return f"/uploads/{path.name}"
+    return None
 
 
 # Предопределенные типы ресторанов
@@ -493,8 +528,8 @@ def set_subscription_active(
     conn.close()
 
 
-def ensure_trial_for_restaurant(restaurant_id: int):
-    plan = get_subscription_plan_by_code("trial")
+def ensure_base_subscription(restaurant_id: int):
+    plan = get_subscription_plan_by_code("base")
     if not plan:
         return
     conn = sqlite3.connect("users.db")
@@ -508,9 +543,6 @@ def ensure_trial_for_restaurant(restaurant_id: int):
     if exists:
         return
     started = datetime.utcnow()
-    expires = None
-    if plan.get("duration_days"):
-        expires = started + timedelta(days=int(plan["duration_days"]))
     create_subscription_record(
         restaurant_id=restaurant_id,
         plan_code=plan["code"],
@@ -518,18 +550,18 @@ def ensure_trial_for_restaurant(restaurant_id: int):
         amount=0,
         currency=plan.get("currency", "RUB"),
         started_at=started,
-        expires_at=expires,
+        expires_at=None,
     )
 
 
-def ensure_trials_for_existing_restaurants():
+def ensure_base_for_existing_restaurants():
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("SELECT id FROM restaurants")
     restaurant_ids = [row[0] for row in c.fetchall()]
     conn.close()
     for restaurant_id in restaurant_ids:
-        ensure_trial_for_restaurant(restaurant_id)
+        ensure_base_subscription(restaurant_id)
 
 
 def get_active_subscription(restaurant_id: int) -> Optional[dict]:
@@ -723,7 +755,7 @@ migrate_db()
 init_db()
 sync_subscription_plans()
 cleanup_expired_subscriptions()
-ensure_trials_for_existing_restaurants()
+ensure_base_for_existing_restaurants()
 
 
 def build_photo_url(photo_value: Optional[str]) -> Optional[str]:
@@ -1345,7 +1377,9 @@ def create_restaurant(req: CreateRestaurantRequest, current_user: dict = Depends
     restaurant_id = c.lastrowid
     conn.commit()
     conn.close()
-    ensure_trial_for_restaurant(restaurant_id)
+    ensure_base_subscription(restaurant_id)
+    if req.subdomain:
+        generate_qr_for_restaurant(restaurant_id, req.subdomain)
     return get_restaurant(restaurant_id)
 
 
@@ -1366,11 +1400,23 @@ def get_user_restaurants(current_user: dict = Depends(get_current_user)):
         photo_url = f"/uploads/{row[1]}" if row[1] else None
         subscription = get_active_subscription(row[0]) or get_latest_subscription(row[0])
         restaurants.append({
-            "id": row[0], "photo": photo_url, "name": row[2], "description": row[3],
-            "city": row[4], "address": row[5], "hours": row[6],
-            "instagram": row[7], "telegram": row[8], "vk": row[9], "whatsapp": row[10],
-            "features": features, "type": row[12], "phone": row[13], "subdomain": row[14],
-            "subscription": format_subscription_payload(subscription)
+            "id": row[0],
+            "photo": photo_url,
+            "name": row[2],
+            "description": row[3],
+            "city": row[4],
+            "address": row[5],
+            "hours": row[6],
+            "instagram": row[7],
+            "telegram": row[8],
+            "vk": row[9],
+            "whatsapp": row[10],
+            "features": features,
+            "type": row[12],
+            "phone": row[13],
+            "subdomain": row[14],
+            "qr_code": get_qr_url(row[0]),
+            "subscription": format_subscription_payload(subscription),
         })
     return restaurants
 @app.get("/api/restaurants/{restaurant_id}", response_model=Restaurant)
@@ -1410,6 +1456,7 @@ def get_restaurant(restaurant_id: int):
         "type": row[12],
         "phone": row[13],
         "subdomain": row[14],
+        "qr_code": get_qr_url(row[0]),
         "subscription": format_subscription_payload(subscription),
     }
 
@@ -1462,6 +1509,15 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
         raise HTTPException(400, "Неверный тип ресторана")
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
+    c.execute(
+        "SELECT subdomain FROM restaurants WHERE id = ? AND owner_email = ?",
+        (restaurant_id, current_user["email"]),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    previous_subdomain = (row[0] or "").strip()
     updates = []
     values = []
     if req.name is not None:
@@ -1514,6 +1570,12 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
         raise HTTPException(404, "Заведение не найдено")
     conn.commit()
     conn.close()
+    if req.subdomain is not None:
+        new_subdomain = req.subdomain.strip()
+        if new_subdomain and new_subdomain != previous_subdomain:
+            generate_qr_for_restaurant(restaurant_id, new_subdomain)
+        if not new_subdomain and previous_subdomain:
+            remove_qr_for_restaurant(restaurant_id)
     return {"message": "Обновлено"}
 
 

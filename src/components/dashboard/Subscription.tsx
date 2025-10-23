@@ -1,10 +1,18 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { CircleCheck, Loader2, RefreshCcw } from "lucide-react"
-import { toast } from "sonner"
+import {
+  BadgeCheck,
+  CalendarClock,
+  Clock3,
+  CreditCard,
+  Loader2,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
@@ -13,22 +21,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
-
-type Plan = {
-  code: string
-  name: string
-  description?: string | null
-  price: number
-  price_minor: number
-  currency: string
-  duration_days?: number | null
-  category_limit?: number | null
-  item_limit?: number | null
-  is_full_access?: boolean
-  is_trial?: boolean
-  features?: string[]
-}
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { showErrorToast } from "@/lib/show-error-toast"
 
 type SubscriptionInfo = {
   plan_code: string | null
@@ -45,6 +46,20 @@ type Limits = {
   item_limit: number | null
 }
 
+type HistoryEntry = {
+  id: number
+  plan_code: string
+  plan_name: string
+  status: string
+  created_at?: string | null
+  started_at?: string | null
+  expires_at?: string | null
+  amount?: number
+  amount_minor?: number
+  currency?: string
+  duration_days?: number | null
+}
+
 const statusLabels: Record<string, string> = {
   active: "Активна",
   pending: "Ожидает оплаты",
@@ -52,12 +67,18 @@ const statusLabels: Record<string, string> = {
   canceled: "Отменена",
 }
 
+const badgeVariants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  active: "default",
+  pending: "outline",
+  expired: "secondary",
+  canceled: "destructive",
+}
+
 const parseMessage = (data: any, raw: string, fallback: string) => {
   if (typeof data === "string" && data.trim()) return data
   if (data && typeof data.message === "string" && data.message.trim()) return data.message
   if (data && typeof data.detail === "string" && data.detail.trim()) return data.detail
   if (data && typeof data.error === "string" && data.error.trim()) return data.error
-  if (raw && raw.includes("Request Entity Too Large")) return "Файл слишком большой"
   return raw?.trim() || fallback
 }
 
@@ -75,7 +96,7 @@ const formatCurrency = (amount: number, currency: string) => {
 }
 
 const formatDate = (value?: string | null) => {
-  if (!value) return null
+  if (!value) return "—"
   const normalized = value.replace(" ", "T")
   const date = new Date(`${normalized}Z`)
   if (Number.isNaN(date.getTime())) {
@@ -90,60 +111,28 @@ const formatLimitsText = (limits: Limits | null) => {
   if (category_limit == null && item_limit == null) return "Полный доступ без ограничений"
   const parts: string[] = []
   if (typeof category_limit === "number") {
-    parts.push(`до ${category_limit} категорий`)
+    parts.push(`До ${category_limit} категорий меню`)
   }
   if (typeof item_limit === "number") {
-    parts.push(`до ${item_limit} блюд в категории`)
+    parts.push(`До ${item_limit} блюд в категории`)
   }
   return parts.join(", ")
 }
 
-const planLimitDescription = (plan: Plan) => {
-  if (plan.is_full_access) return "Полный доступ без ограничений"
-  const parts: string[] = []
-  if (typeof plan.category_limit === "number") {
-    parts.push(`До ${plan.category_limit} категорий меню`)
-  }
-  if (typeof plan.item_limit === "number") {
-    parts.push(`До ${plan.item_limit} блюд в категории`)
-  }
-  return parts.join(", ") || "Гибкие ограничения"
+const getStatusIcon = (status: string | null) => {
+  if (status === "active") return <BadgeCheck className="size-5 text-emerald-300" />
+  if (status === "pending") return <Clock3 className="size-5 text-yellow-300" />
+  if (status === "canceled") return <Clock3 className="size-5 text-red-300" />
+  if (status === "expired") return <Clock3 className="size-5 text-sky-200" />
+  return <Sparkles className="size-5 text-[#FFEA5A]" />
 }
 
 export default function Subscription({ activeTeam }: { activeTeam: string }) {
-  const [plans, setPlans] = useState<Plan[]>([])
   const [subscription, setSubscription] = useState<SubscriptionInfo>(null)
   const [limits, setLimits] = useState<Limits | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [processingPlan, setProcessingPlan] = useState<string | null>(null)
-  const [pendingPayment, setPendingPayment] = useState<{ paymentId: string; confirmationUrl?: string } | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadPlans() {
-      const token = localStorage.getItem("access_token")
-      if (!token) return
-      try {
-        const res = await fetch("/api/subscriptions/plans", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled && Array.isArray(data?.plans)) {
-          setPlans(data.plans)
-        }
-      } catch (error) {
-        console.error("Не удалось загрузить тарифы", error)
-      }
-    }
-
-    loadPlans()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [loadingSubscription, setLoadingSubscription] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(false)
 
   const reloadSubscription = useCallback(async () => {
     if (!activeTeam) {
@@ -153,10 +142,10 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
     }
     const token = localStorage.getItem("access_token")
     if (!token) {
-      toast.error("Нет доступа. Авторизуйтесь повторно")
+      showErrorToast("Нет доступа. Авторизуйтесь повторно")
       return
     }
-    setLoading(true)
+    setLoadingSubscription(true)
     try {
       const res = await fetch(`/api/restaurants/${activeTeam}/subscription`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -173,309 +162,265 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
       }
       if (!res.ok) {
         const message = parseMessage(data, raw, "Не удалось загрузить подписку")
-        toast.error(message)
+        showErrorToast(message)
         return
       }
       setSubscription(data?.subscription ?? null)
       setLimits(data?.limits ?? null)
-      setPendingPayment(null)
       window.dispatchEvent(new CustomEvent("subscription:updated"))
     } catch (error) {
       console.error(error)
-      toast.error("Не удалось загрузить подписку")
+      showErrorToast("Не удалось загрузить подписку")
     } finally {
-      setLoading(false)
+      setLoadingSubscription(false)
+    }
+  }, [activeTeam])
+
+  const loadHistory = useCallback(async () => {
+    if (!activeTeam) {
+      setHistory([])
+      return
+    }
+    const token = localStorage.getItem("access_token")
+    if (!token) {
+      showErrorToast("Нет доступа. Авторизуйтесь повторно")
+      return
+    }
+    setLoadingHistory(true)
+    try {
+      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/history`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      })
+      const raw = await res.text()
+      let data: any = null
+      if (raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          data = null
+        }
+      }
+      if (!res.ok) {
+        const message = parseMessage(data, raw, "Не удалось загрузить историю")
+        showErrorToast(message)
+        return
+      }
+      if (Array.isArray(data?.history)) {
+        setHistory(data.history)
+      } else {
+        setHistory([])
+      }
+    } catch (error) {
+      console.error(error)
+      showErrorToast("Не удалось загрузить историю подписок")
+    } finally {
+      setLoadingHistory(false)
     }
   }, [activeTeam])
 
   useEffect(() => {
     reloadSubscription()
-  }, [reloadSubscription])
+    loadHistory()
+  }, [reloadSubscription, loadHistory])
 
   const currentStatusLabel = useMemo(() => {
     if (!subscription?.status) return "Подписка не оформлена"
     return statusLabels[subscription.status] || subscription.status
   }, [subscription])
 
-  const activePlanCode = subscription?.plan_code || null
+  const periodText = useMemo(() => {
+    if (!subscription) return "Подписка не оформлена"
+    if (subscription.plan_code === "base") return "Без срока действия"
+    if (subscription.expires_at) return `До ${formatDate(subscription.expires_at)}`
+    return "Без срока действия"
+  }, [subscription])
 
-  const handleSubscribe = async (planCode: string) => {
-    if (!activeTeam) {
-      toast.error("Выберите заведение")
-      return
-    }
-    if (pendingPayment?.paymentId) {
-      toast.warning("Сначала завершите оплату текущей подписки")
-      return
-    }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      toast.error("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setProcessingPlan(planCode)
-    try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          plan_code: planCode,
-          return_url: `${window.location.origin}/dashboard?block=subscription`,
-        }),
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
+  const startedAt = useMemo(() => formatDate(subscription?.started_at), [subscription])
 
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось оформить подписку")
-        toast.error(message)
-        return
-      }
+  const limitsText = useMemo(() => formatLimitsText(limits), [limits])
 
-      if (data?.status === "active") {
-        await reloadSubscription()
-        toast.success("Подписка активирована")
-      } else if (data?.status === "pending") {
-        const paymentId = data?.payment_id as string | undefined
-        setPendingPayment({ paymentId: paymentId || "", confirmationUrl: data?.confirmation_url })
-        if (data?.confirmation_url) {
-          window.open(data.confirmation_url, "_blank", "noopener")
-        }
-        toast.info("Перейдите к оплате и подтвердите платеж")
-      } else {
-        await reloadSubscription()
-        toast.success("Запрос на подписку отправлен")
-      }
-    } catch (error) {
-      console.error(error)
-      toast.error("Не удалось оформить подписку")
-    } finally {
-      setProcessingPlan(null)
+  const lastPayment = useMemo(() => {
+    if (subscription?.amount != null) {
+      return formatCurrency(subscription.amount, subscription.currency || "RUB")
     }
-  }
-
-  const handleRefreshPayment = async () => {
-    if (!activeTeam || !pendingPayment?.paymentId) {
-      toast.warning("Нет платежа для проверки")
-      return
+    const paidEntry = history.find((entry) => entry.amount != null)
+    if (paidEntry && paidEntry.amount != null) {
+      return formatCurrency(paidEntry.amount, paidEntry.currency || "RUB")
     }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      toast.error("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setRefreshing(true)
-    try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/refresh`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ payment_id: pendingPayment.paymentId }),
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
+    return "—"
+  }, [subscription, history])
 
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось проверить платеж")
-        toast.error(message)
-        return
-      }
-
-      const status = data?.status
-      if (status === "active") {
-        await reloadSubscription()
-        setPendingPayment(null)
-        toast.success("Подписка активирована")
-      } else if (status === "canceled") {
-        setPendingPayment(null)
-        toast.error("Платеж отменен")
-      } else {
-        toast.info("Платеж ещё обрабатывается")
-      }
-    } catch (error) {
-      console.error(error)
-      toast.error("Не удалось проверить платеж")
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  const renderPlanPrice = (plan: Plan) => {
-    if (plan.price <= 0) return "Бесплатно"
-    return formatCurrency(plan.price, plan.currency)
+  const handleOpenTariffs = () => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const teamParam = params.get("team") || activeTeam
+    window.dispatchEvent(
+      new CustomEvent("dashboard:navigate", {
+        detail: { block: "tariffs", team: teamParam || undefined },
+      }),
+    )
   }
 
   if (!activeTeam) {
     return (
       <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-        <h2 className="text-xl font-bold">Моя подписка</h2>
+        <h2 className="text-xl font-bold">Подписка и история</h2>
         <Card>
           <CardHeader>
             <CardTitle>Выберите заведение</CardTitle>
-            <CardDescription>
-              Чтобы управлять подпиской, выберите заведение из списка слева.
-            </CardDescription>
+            <CardDescription>Чтобы увидеть информацию о подписке, выберите заведение в боковом меню.</CardDescription>
           </CardHeader>
         </Card>
       </div>
     )
   }
 
+  const statusIcon = getStatusIcon(subscription?.status || null)
+  const statusVariant = badgeVariants[subscription?.status || ""] || "outline"
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-      <h2 className="text-xl font-bold">Моя подписка</h2>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-xl font-bold">Подписка и история</h2>
+        <Button variant="outline" onClick={handleOpenTariffs} className="w-full sm:w-auto">
+          Перейти к тарифам
+        </Button>
+      </div>
+
+      <Card className="overflow-hidden border-none bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-white/10">
+                {statusIcon}
+              </div>
+              <div>
+                <CardTitle className="text-white text-xl">
+                  {subscription?.plan_name || "Подписка не оформлена"}
+                </CardTitle>
+                <CardDescription className="text-slate-200">
+                  Статус: {currentStatusLabel}
+                </CardDescription>
+              </div>
+            </div>
+            <Badge variant={statusVariant} className="w-max">
+              {currentStatusLabel}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl bg-white/10 p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <BadgeCheck className="size-4" />
+                <span>Статус</span>
+              </div>
+              <div className="mt-2 text-base font-semibold text-white">
+                {loadingSubscription ? (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    <span>Обновляем данные…</span>
+                  </span>
+                ) : (
+                  currentStatusLabel
+                )}
+              </div>
+            </div>
+            <div className="rounded-2xl bg-white/10 p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <CalendarClock className="size-4" />
+                <span>Период</span>
+              </div>
+              <div className="mt-2 text-base font-semibold text-white">{periodText}</div>
+              {subscription?.started_at && (
+                <div className="text-xs text-slate-200/80">С {startedAt}</div>
+              )}
+            </div>
+            <div className="rounded-2xl bg-white/10 p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <ShieldCheck className="size-4" />
+                <span>Ограничения</span>
+              </div>
+              <div className="mt-2 text-base font-semibold text-white">{limitsText}</div>
+            </div>
+            <div className="rounded-2xl bg-white/10 p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-200">
+                <CreditCard className="size-4" />
+                <span>Последний платёж</span>
+              </div>
+              <div className="mt-2 text-base font-semibold text-white">{lastPayment}</div>
+              {subscription?.amount != null && subscription?.currency && (
+                <div className="text-xs text-slate-200/80">По текущей подписке</div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+        <CardFooter className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-200/80">
+            Следите за лимитами и переходите на новые тарифы в один клик.
+          </p>
+          <Button variant="secondary" onClick={handleOpenTariffs} className="bg-[#FFEA5A] text-black hover:bg-[#ffe142]">
+            Выбрать другой тариф
+          </Button>
+        </CardFooter>
+      </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>{subscription?.plan_name || "Подписка не оформлена"}</CardTitle>
+          <CardTitle>История подписок</CardTitle>
           <CardDescription>
-            Статус: {currentStatusLabel}
-            {subscription?.expires_at && (
-              <span className="block">
-                Действует до {formatDate(subscription.expires_at)}
-              </span>
-            )}
+            Здесь отображаются все оформленные подписки и их статус.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {loadingHistory ? (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
-              <span>Загружаем данные подписки…</span>
+              <span>Загружаем историю…</span>
             </div>
+          ) : history.length === 0 ? (
+            <p className="text-sm text-muted-foreground">История оплат пока пуста.</p>
           ) : (
-            <div className="text-sm text-muted-foreground">
-              <p>Текущие ограничения: {formatLimitsText(limits)}</p>
-              {subscription?.amount != null && (
-                <p>
-                  Последний платёж: {formatCurrency(subscription.amount, subscription.currency || "RUB")}
-                </p>
-              )}
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Подписка</TableHead>
+                    <TableHead>Статус</TableHead>
+                    <TableHead>Дата оформления</TableHead>
+                    <TableHead>Начало</TableHead>
+                    <TableHead>Окончание</TableHead>
+                    <TableHead>Стоимость</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.map((entry) => {
+                    const label = statusLabels[entry.status] || entry.status
+                    const variant = badgeVariants[entry.status] || "secondary"
+                    return (
+                      <TableRow key={entry.id}>
+                        <TableCell className="font-medium">{entry.plan_name}</TableCell>
+                        <TableCell>
+                          <Badge variant={variant}>{label}</Badge>
+                        </TableCell>
+                        <TableCell>{formatDate(entry.created_at)}</TableCell>
+                        <TableCell>{formatDate(entry.started_at)}</TableCell>
+                        <TableCell>{formatDate(entry.expires_at)}</TableCell>
+                        <TableCell>
+                          {entry.amount != null
+                            ? formatCurrency(entry.amount, entry.currency || "RUB")
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
       </Card>
-
-      {pendingPayment?.paymentId && (
-        <Card className="border-yellow-200 bg-yellow-50">
-          <CardHeader>
-            <CardTitle className="text-base">Оплата ожидает подтверждения</CardTitle>
-            <CardDescription>
-              Завершите оплату и нажмите «Проверить оплату», чтобы активировать подписку.
-            </CardDescription>
-          </CardHeader>
-          <CardFooter className="flex flex-wrap gap-2">
-            {pendingPayment.confirmationUrl && (
-              <Button
-                variant="outline"
-                onClick={() => window.open(pendingPayment.confirmationUrl, "_blank", "noopener")}
-              >
-                Открыть оплату
-              </Button>
-            )}
-            <Button onClick={handleRefreshPayment} disabled={refreshing}>
-              {refreshing ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <RefreshCcw className="mr-2 size-4" />
-              )}
-              Проверить оплату
-            </Button>
-          </CardFooter>
-        </Card>
-      )}
-
-      <div className="bg-muted/50 rounded-xl">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-          <div className="grid gap-6 md:grid-cols-3">
-            {plans.map((plan) => {
-              const features = [...(plan.features ?? [])]
-              const limitText = planLimitDescription(plan)
-              if (!features.includes(limitText)) {
-                features.unshift(limitText)
-              }
-              const isActive = activePlanCode === plan.code && subscription?.status === "active"
-              const isProcessing = processingPlan === plan.code
-
-              return (
-                <Card
-                  key={plan.code}
-                  className="flex h-full flex-col justify-between text-left shadow-sm"
-                >
-                  <CardHeader>
-                    <CardTitle>{plan.name}</CardTitle>
-                    {plan.description && (
-                      <CardDescription>{plan.description}</CardDescription>
-                    )}
-                    <div className="mt-4 text-3xl font-semibold">
-                      {renderPlanPrice(plan)}
-                    </div>
-                    {plan.duration_days && (
-                      <p className="text-sm text-muted-foreground">
-                        Длительность: {plan.duration_days} дн.
-                      </p>
-                    )}
-                  </CardHeader>
-                  <CardContent>
-                    <Separator className="mb-4" />
-                    <ul className="space-y-3 text-sm">
-                      {features.map((feature) => (
-                        <li key={feature} className="flex items-start gap-2">
-                          <CircleCheck className="mt-0.5 size-4 text-green-600" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                  <CardFooter>
-                    <Button
-                      className="w-full"
-                      onClick={() => handleSubscribe(plan.code)}
-                      disabled={isActive || isProcessing}
-                    >
-                      {isActive
-                        ? "Текущий тариф"
-                        : isProcessing
-                        ? "Оформляем..."
-                        : "Оформить подписку"}
-                    </Button>
-                  </CardFooter>
-                </Card>
-              )
-            })}
-            {plans.length === 0 && (
-              <Card className="md:col-span-3">
-                <CardHeader>
-                  <CardTitle>Тарифы временно недоступны</CardTitle>
-                  <CardDescription>
-                    Попробуйте обновить страницу позже или обратитесь в поддержку.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }
-
