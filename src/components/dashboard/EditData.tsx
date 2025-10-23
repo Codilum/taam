@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Card,
@@ -130,65 +130,96 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
 
   const daysOptions = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!activeTeam) return;
-      setLoading(true);
+  const applyRestaurantData = useCallback((restaurantData: any) => {
+    setData({
+      photo: restaurantData.photo,
+      name: restaurantData.name || "",
+      description: restaurantData.description || "",
+      city: restaurantData.city || "",
+      address: restaurantData.address || "",
+      hours: restaurantData.hours || "",
+      instagram: restaurantData.instagram || "",
+      telegram: restaurantData.telegram || "",
+      vk: restaurantData.vk || "",
+      whatsapp: restaurantData.whatsapp || "",
+      features: restaurantData.features || [],
+      phone: restaurantData.phone || "",
+      subdomain: restaurantData.subdomain || "",
+      type: restaurantData.type || "",
+    });
+    setFeatures(restaurantData.features || []);
+    setInitialSubdomain((restaurantData.subdomain || "").trim());
+
+    if (restaurantData.hours) {
+      try {
+        const parsedHours = JSON.parse(restaurantData.hours);
+        if (Array.isArray(parsedHours)) {
+          setWorkingHours(
+            parsedHours.map((h: any) => ({
+              startDay: h.days.split("-")[0] || "Пн",
+              endDay: h.days.split("-")[1] || h.days.split("-")[0] || "Пн",
+              open: h.open || "",
+              close: h.close || "",
+              breakStart: h.breakStart || "",
+              breakEnd: h.breakEnd || "",
+            }))
+          );
+          return;
+        }
+      } catch {
+        const [open, close] = (restaurantData.hours as string).split("-") ?? ["", ""];
+        setWorkingHours([
+          { startDay: "Пн", endDay: "Вс", open: open || "", close: close || "", breakStart: "", breakEnd: "" },
+        ]);
+        return;
+      }
+    }
+
+    setWorkingHours([
+      { startDay: "Пн", endDay: "Пн", open: "09:00", close: "18:00", breakStart: "", breakEnd: "" },
+    ]);
+  }, []);
+
+  const fetchRestaurantData = useCallback(
+    async (options: { showLoader?: boolean } = {}) => {
+      if (!activeTeam) {
+        setData(null);
+        setFeatures([]);
+        setLoading(false);
+        return false;
+      }
+      const { showLoader = true } = options;
+      if (showLoader) {
+        setLoading(true);
+      }
       try {
         const res = await fetch(`/api/restaurants/${activeTeam}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
-        }); 
+        });
         if (res.ok) {
           const restaurantData = await res.json();
-          setData({
-            photo: restaurantData.photo,
-            name: restaurantData.name || "",
-            description: restaurantData.description || "",
-            city: restaurantData.city || "",
-            address: restaurantData.address || "",
-            hours: restaurantData.hours || "",
-            instagram: restaurantData.instagram || "",
-            telegram: restaurantData.telegram || "",
-            vk: restaurantData.vk || "",
-            whatsapp: restaurantData.whatsapp || "",
-            features: restaurantData.features || [],
-            phone: restaurantData.phone || "",
-            subdomain: restaurantData.subdomain || "",
-            type: restaurantData.type || "",
-          });
-          setFeatures(restaurantData.features || []);
-          setInitialSubdomain((restaurantData.subdomain || "").trim());
-
-          if (restaurantData.hours) {
-            try {
-              const parsedHours = JSON.parse(restaurantData.hours);
-              if (Array.isArray(parsedHours)) {
-                setWorkingHours(parsedHours.map(h => ({
-                  startDay: h.days.split("-")[0] || "Пн",
-                  endDay: h.days.split("-")[1] || h.days.split("-")[0] || "Пн",
-                  open: h.open || "",
-                  close: h.close || "",
-                  breakStart: h.breakStart || "",
-                  breakEnd: h.breakEnd || "",
-                })));
-              }
-            } catch {
-              const [open, close] = restaurantData.hours.split("-");
-              setWorkingHours([{ startDay: "Пн", endDay: "Вс", open: open || "", close: close || "", breakStart: "", breakEnd: "" }]);
-            }
-          }
-        } else {
-        showErrorToast("Ошибка загрузки данных заведения");
+          applyRestaurantData(restaurantData);
+          return true;
         }
+
+        showErrorToast("Ошибка загрузки данных заведения");
+        return false;
       } catch (err) {
         console.error(err);
         showErrorToast("Ошибка загрузки данных");
+        return false;
       } finally {
-        setLoading(false);
+        if (showLoader) {
+          setLoading(false);
+        }
       }
-    };
-    fetchData();
-  }, [activeTeam]);
+    },
+    [activeTeam, applyRestaurantData]
+  );
+
+  useEffect(() => {
+    fetchRestaurantData();
+  }, [fetchRestaurantData]);
 
   const handleFeatureChange = (feature: string) => {
     setFeatures((prev) =>
@@ -224,7 +255,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
     const trimmedSubdomain = (data.subdomain || "").trim();
     const subdomainChanged = trimmedSubdomain !== initialSubdomain.trim();
 
-    const saveData = {
+    const saveData: RestaurantData = {
       ...data,
       hours: formattedHours,
       features,
@@ -256,14 +287,13 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
           toast.info("Запись поддомена занимает до 15 минут");
         }
         setInitialSubdomain(trimmedSubdomain);
-        setData(prev => (prev ? { ...prev, subdomain: trimmedSubdomain } : prev));
-        setTimeout(() => {
-          if (typeof window !== "undefined") {
-            window.location.reload();
-          } else {
-            router.refresh();
-          }
-        }, 1200);
+        setData(prev => (prev ? { ...prev, ...saveData } : saveData));
+        const refreshed = await fetchRestaurantData({ showLoader: false });
+        if (refreshed && typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("restaurant:updated", { detail: { team: activeTeam } })
+          );
+        }
       } else {
         const message =
           (typeof responseData === "string" && responseData.trim())

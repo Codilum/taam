@@ -279,14 +279,11 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
   const statusIcon = getStatusIcon(subscription?.status || null)
   const statusVariant = badgeVariants[subscription?.status || ""] || "outline"
 
-  return (
-    <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl font-bold">Подписка и история</h2>
-        <Button variant="outline" onClick={handleOpenTariffs} className="w-full sm:w-auto">
-          Перейти к тарифам
-        </Button>
-      </div>
+    return (
+      <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <h2 className="text-xl font-bold">Подписка и история</h2>
+        </div>
 
       <Card className="overflow-hidden border-none bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
         <CardHeader>

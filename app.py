@@ -156,6 +156,17 @@ def get_qr_url(restaurant_id: int) -> Optional[str]:
     return None
 
 
+def get_payment_confirmation_url(payment_id: Optional[str]) -> Optional[str]:
+    if not payment_id or not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+        return None
+    try:
+        payment = Payment.find_one(payment_id)
+    except Exception:
+        return None
+    confirmation = getattr(payment, "confirmation", None)
+    return getattr(confirmation, "confirmation_url", None)
+
+
 # Предопределенные типы ресторанов
 RESTAURANT_TYPES = [
     "Ресторан",
@@ -907,6 +918,10 @@ class CreateSubscriptionRequest(BaseModel):
 
 class RefreshSubscriptionRequest(BaseModel):
     payment_id: str
+
+
+class CancelSubscriptionRequest(BaseModel):
+    payment_id: Optional[str] = None
 
 # === Модели (остальные без изменений) ===
 class RegisterRequest(BaseModel):
@@ -2450,10 +2465,21 @@ def ensure_restaurant_access(restaurant_id: int, owner_email: str):
 @app.get("/api/restaurants/{restaurant_id}/subscription")
 def get_restaurant_subscription(restaurant_id: int, current_user: dict = Depends(get_current_user)):
     ensure_restaurant_access(restaurant_id, current_user["email"])
-    subscription = get_active_subscription(restaurant_id) or get_latest_subscription(restaurant_id)
+    latest = get_latest_subscription(restaurant_id)
+    subscription = get_active_subscription(restaurant_id) or latest
+    pending_payment = None
+    if latest and latest.get("status") == "pending":
+        pending_payment = {
+            "subscription_id": latest.get("id"),
+            "plan_code": latest.get("plan_code"),
+            "plan_name": latest.get("plan", {}).get("name") if latest.get("plan") else None,
+            "payment_id": latest.get("payment_id"),
+            "confirmation_url": get_payment_confirmation_url(latest.get("payment_id")),
+        }
     return {
         "subscription": format_subscription_payload(subscription),
         "limits": get_subscription_limits(restaurant_id),
+        "pending_payment": pending_payment,
     }
 
 
@@ -2480,12 +2506,29 @@ def create_restaurant_subscription(
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute(
-        "SELECT id FROM restaurant_subscriptions WHERE restaurant_id = ? AND status = 'pending'",
+        """
+        SELECT id, payment_id, plan_code
+        FROM restaurant_subscriptions
+        WHERE restaurant_id = ? AND status = 'pending'
+        ORDER BY datetime(created_at) DESC, id DESC
+        LIMIT 1
+        """,
         (restaurant_id,),
     )
-    if c.fetchone():
+    pending_row = c.fetchone()
+    if pending_row:
+        subscription_id, payment_id, pending_plan_code = pending_row
         conn.close()
-        raise HTTPException(status_code=400, detail="У вас уже есть неоплаченная подписка. Завершите оплату или обновите статус.")
+        plan = get_subscription_plan_by_code(pending_plan_code)
+        return {
+            "status": "pending",
+            "subscription_id": subscription_id,
+            "payment_id": payment_id,
+            "confirmation_url": get_payment_confirmation_url(payment_id),
+            "existing": True,
+            "plan_code": pending_plan_code,
+            "plan_name": plan.get("name") if plan else None,
+        }
     conn.close()
 
     active = get_active_subscription(restaurant_id)
@@ -2558,7 +2601,62 @@ def create_restaurant_subscription(
         "payment_id": payment.id,
         "subscription_id": subscription_id,
         "confirmation_url": confirmation_url,
+        "plan_code": plan_code,
+        "plan_name": plan.get("name") if plan else None,
+        "existing": False,
     }
+
+
+@app.post("/api/restaurants/{restaurant_id}/subscription/cancel")
+def cancel_restaurant_subscription(
+    restaurant_id: int,
+    req: CancelSubscriptionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    if req.payment_id:
+        c.execute(
+            """
+            SELECT id, payment_id
+            FROM restaurant_subscriptions
+            WHERE restaurant_id = ? AND status = 'pending' AND payment_id = ?
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (restaurant_id, req.payment_id),
+        )
+    else:
+        c.execute(
+            """
+            SELECT id, payment_id
+            FROM restaurant_subscriptions
+            WHERE restaurant_id = ? AND status = 'pending'
+            ORDER BY datetime(created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (restaurant_id,),
+        )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Нет неоплаченной подписки")
+
+    subscription_id, payment_id = row
+    if payment_id and YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
+        try:
+            Payment.cancel(payment_id)
+        except Exception:
+            pass
+
+    c.execute(
+        "UPDATE restaurant_subscriptions SET status = 'canceled' WHERE id = ?",
+        (subscription_id,),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "canceled"}
 
 
 @app.post("/api/restaurants/{restaurant_id}/subscription/refresh")

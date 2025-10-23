@@ -90,8 +90,11 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   const [subscription, setSubscription] = useState<SubscriptionInfo>(null)
   const [loading, setLoading] = useState(false)
   const [processingPlan, setProcessingPlan] = useState<string | null>(null)
-  const [pendingPayment, setPendingPayment] = useState<{ paymentId: string; confirmationUrl?: string } | null>(null)
+  const [pendingPayment, setPendingPayment] = useState<
+    { paymentId: string | null; confirmationUrl?: string; planName?: string; existing?: boolean } | null
+  >(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [canceling, setCanceling] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -150,7 +153,17 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
         return
       }
       setSubscription(data?.subscription ?? null)
-      setPendingPayment(null)
+      const pending = data?.pending_payment
+      if (pending) {
+        setPendingPayment({
+          paymentId: (pending.payment_id as string | null | undefined) ?? null,
+          confirmationUrl: pending.confirmation_url as string | undefined,
+          planName: pending.plan_name as string | undefined,
+          existing: true,
+        })
+      } else {
+        setPendingPayment(null)
+      }
       window.dispatchEvent(new CustomEvent("subscription:updated"))
     } catch (error) {
       console.error(error)
@@ -170,10 +183,6 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   const handleSubscribe = async (planCode: string) => {
     if (!activeTeam) {
       showErrorToast("Выберите заведение")
-      return
-    }
-    if (pendingPayment?.paymentId) {
-      toast.warning("Сначала завершите оплату текущей подписки")
       return
     }
     const token = localStorage.getItem("access_token")
@@ -216,12 +225,24 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
         await reloadSubscription()
         toast.success("Подписка активирована")
       } else if (data?.status === "pending") {
-        const paymentId = data?.payment_id as string | undefined
-        setPendingPayment({ paymentId: paymentId || "", confirmationUrl: data?.confirmation_url })
-        if (data?.confirmation_url) {
-          window.open(data.confirmation_url, "_blank", "noopener")
+        const paymentId = (data?.payment_id as string | null | undefined) ?? null
+        const confirmationUrl = data?.confirmation_url as string | undefined
+        const planName = data?.plan_name as string | undefined
+        const existing = Boolean(data?.existing)
+        setPendingPayment({
+          paymentId,
+          confirmationUrl,
+          planName,
+          existing,
+        })
+        if (confirmationUrl && !existing) {
+          window.open(confirmationUrl, "_blank", "noopener")
         }
-        toast.info("Перейдите к оплате и подтвердите платеж")
+        if (existing) {
+          toast.warning("У вас уже есть неоплаченная подписка. Вы можете продолжить оплату или отменить её.")
+        } else {
+          toast.info("Перейдите к оплате и подтвердите платеж")
+        }
       } else {
         await reloadSubscription()
         toast.success("Запрос на подписку отправлен")
@@ -289,6 +310,53 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
     }
   }
 
+  const handleCancelPending = async () => {
+    if (!activeTeam) {
+      showErrorToast("Выберите заведение")
+      return
+    }
+    const token = localStorage.getItem("access_token")
+    if (!token) {
+      showErrorToast("Нет доступа. Авторизуйтесь повторно")
+      return
+    }
+    setCanceling(true)
+    try {
+      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/cancel`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ payment_id: pendingPayment?.paymentId ?? null }),
+      })
+      const raw = await res.text()
+      let data: any = null
+      if (raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          data = null
+        }
+      }
+
+      if (!res.ok) {
+        const message = parseMessage(data, raw, "Не удалось отменить подписку")
+        showErrorToast(message)
+        return
+      }
+
+      setPendingPayment(null)
+      toast.success("Неоплаченная подписка отменена")
+      await reloadSubscription()
+    } catch (error) {
+      console.error(error)
+      showErrorToast("Не удалось отменить подписку")
+    } finally {
+      setCanceling(false)
+    }
+  }
+
   const renderPlanPrice = (plan: Plan) => {
     if (plan.price <= 0) return "Бесплатно"
     return formatCurrency(plan.price, plan.currency)
@@ -330,7 +398,7 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
         </div>
       </div>
 
-      {pendingPayment?.paymentId && (
+      {pendingPayment && (
         <Card className="border-yellow-200 bg-yellow-50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -338,7 +406,13 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
               Оплата ожидает подтверждения
             </CardTitle>
             <CardDescription>
-              Завершите оплату и нажмите «Проверить оплату», чтобы активировать подписку.
+              {pendingPayment.planName ? (
+                <>
+                  Оплата тарифа «{pendingPayment.planName}» ожидает подтверждения. Завершите платеж и обновите статус.
+                </>
+              ) : (
+                <>Завершите оплату и нажмите «Проверить оплату», чтобы активировать подписку.</>
+              )}
             </CardDescription>
           </CardHeader>
           <CardFooter className="flex flex-wrap gap-2">
@@ -350,13 +424,23 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
                 Открыть оплату
               </Button>
             )}
-            <Button onClick={handleRefreshPayment} disabled={refreshing}>
+            <Button onClick={handleRefreshPayment} disabled={refreshing || !pendingPayment.paymentId}>
               {refreshing ? (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               ) : (
                 <RefreshCcw className="mr-2 size-4" />
               )}
               Проверить оплату
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleCancelPending}
+              disabled={canceling}
+            >
+              {canceling ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              {canceling ? "Отменяем..." : "Отменить оплату"}
             </Button>
           </CardFooter>
         </Card>
