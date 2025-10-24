@@ -56,11 +56,20 @@ interface StandardCategory {
   description: string;
 }
 
+interface ImportedCategory {
+  id: number;
+  photo: string | null;
+  name: string;
+  description: string | null;
+  placenum: number;
+  items?: Partial<MenuItem>[];
+}
+
 interface ImportResponse {
   created?: number;
   updated?: number;
   errors?: string[];
-  items?: MenuItem[];
+  categories?: ImportedCategory[];
 }
 
 const parseErrorMessage = async (res: Response, fallback: string) => {
@@ -102,13 +111,11 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<MenuCategory | null>(null);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
-  const [importCategoryId, setImportCategoryId] = useState<string>("");
   const [importFile, setImportFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<string[]>([]);
 
   const resetImportState = () => {
-    setImportCategoryId("");
     setImportFile(null);
     setImportErrors([]);
     setIsImporting(false);
@@ -286,10 +293,6 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       showErrorToast("Выберите заведение");
       return;
     }
-    if (!importCategoryId) {
-      showErrorToast("Выберите категорию для импорта");
-      return;
-    }
     if (!importFile) {
       showErrorToast("Выберите CSV файл");
       return;
@@ -303,7 +306,7 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       formData.append("file", importFile);
 
       const response = await fetch(
-        `/api/restaurants/${activeTeam}/menu-categories/${importCategoryId}/import-csv`,
+        `/api/restaurants/${activeTeam}/menu/import-csv`,
         {
           method: "POST",
           headers: {
@@ -328,20 +331,39 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
       }
 
       const data: ImportResponse = await response.json();
-      const categoryIdNumber = Number(importCategoryId);
 
-      if (Array.isArray(data.items)) {
-        const normalizedItems = data.items
-          .map((item) => ({
-            ...item,
-            category_id: categoryIdNumber
+      if (Array.isArray(data.categories)) {
+        const updatedCategories = data.categories
+          .map((category) => ({
+            id: category.id,
+            photo: category.photo,
+            name: category.name,
+            description: category.description,
+            placenum: category.placenum
           }))
           .sort((a, b) => a.placenum - b.placenum);
 
-        setItems((prevItems) => {
-          const otherItems = prevItems.filter((item) => item.category_id !== categoryIdNumber);
-          return [...otherItems, ...normalizedItems];
+        const collectedItems: MenuItem[] = [];
+        data.categories.forEach((category) => {
+          const catId = category.id;
+          const itemsList = Array.isArray(category.items) ? category.items : [];
+          itemsList.forEach((item: any) => {
+            collectedItems.push({
+              ...item,
+              category_id: catId
+            });
+          });
         });
+
+        const sortedItems = collectedItems.sort((a, b) => {
+          if (a.category_id === b.category_id) {
+            return a.placenum - b.placenum;
+          }
+          return a.category_id - b.category_id;
+        });
+
+        setCategories(updatedCategories);
+        setItems(sortedItems);
       }
 
       if (data.errors && data.errors.length > 0) {
@@ -722,27 +744,11 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
               Импорт блюд из CSV
             </DialogTitle>
             <DialogDescription className="text-sm">
-              Выберите категорию и загрузите CSV файл. Стандартное фото будет установлено автоматически, позже его можно заменить.
+              Укажите название и описание категории прямо в CSV (столбцы «категория» и «описание категории»). Стандартное фото будет установлено автоматически, позже его можно заменить.
             </DialogDescription>
           </DialogHeader>
 
           <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4">
-            <div className="space-y-1">
-              <Label className="text-sm font-medium">Категория*</Label>
-              <Select value={importCategoryId} onValueChange={setImportCategoryId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Выберите категорию" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((category) => (
-                    <SelectItem key={category.id} value={String(category.id)} className="text-sm">
-                      {category.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
             <div className="space-y-1">
               <Label className="text-sm font-medium">CSV файл*</Label>
               <Input
@@ -769,6 +775,9 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
                   <span>Скачать пример</span>
                 </a>
               </Button>
+              <p className="text-xs text-gray-500">
+                В файле должны быть колонки «категория», «описание категории», «название», «цена» и остальные поля блюда.
+              </p>
             </div>
 
             {importErrors.length > 0 && (
