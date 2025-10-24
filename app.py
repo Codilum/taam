@@ -39,9 +39,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 DEFAULT_MENU_ITEM_PHOTO = "https://cdn0.iconfinder.com/data/icons/iconic-kitchen-stuffs-3/64/Kitchen_line_icon_-_expand_-_62px_Tudung_Saji-1024.png"
 
 
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
-YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://app.taam.menu/dashboard?block=subscription")
+YOOKASSA_SHOP_ID = '1192183'
+YOOKASSA_SECRET_KEY = 'test_VXgfeea-HbtyKEHWXn8Q4uDl0P-4dvsa34QJ-7EwRL0'
+YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://taam.menu/dashboard?block=subscription")
 
 if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
     Configuration.account_id = YOOKASSA_SHOP_ID
@@ -85,8 +85,6 @@ SUBSCRIPTION_PLANS_DATA = [
         "is_trial": True,
         "features": [
             "Полный доступ без ограничений",
-            "Работает 3 дня",
-            "Стоимость 1 ₽",
         ],
     },
     {
@@ -136,6 +134,7 @@ def generate_qr_for_restaurant(restaurant_id: int, subdomain: str) -> None:
     qr.add_data(full_link)
     qr.make(fit=True)
     image = qr.make_image(fill_color="black", back_color="white")
+    remove_qr_for_restaurant(restaurant_id=restaurant_id)
     path = _qr_file_path(restaurant_id)
     image.save(path)
 
@@ -819,6 +818,7 @@ class Restaurant(BaseModel):
     features: List[str] = Field(default_factory=list)
     type: Optional[str] = None
     phone: Optional[str] = None
+    qr_code: Optional[str] = None
     subdomain: Optional[str] = None
     subscription: Optional[RestaurantSubscriptionInfo] = None
 
@@ -1587,7 +1587,7 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
     conn.close()
     if req.subdomain is not None:
         new_subdomain = req.subdomain.strip()
-        if new_subdomain and new_subdomain != previous_subdomain:
+        if new_subdomain:
             generate_qr_for_restaurant(restaurant_id, new_subdomain)
         if not new_subdomain and previous_subdomain:
             remove_qr_for_restaurant(restaurant_id)
