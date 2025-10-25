@@ -95,6 +95,8 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   >(null)
   const [refreshing, setRefreshing] = useState(false)
   const [canceling, setCanceling] = useState(false)
+  const [secretControlsVisible, setSecretControlsVisible] = useState(false)
+  const [grantingTrial, setGrantingTrial] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -119,6 +121,21 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
     loadPlans()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key?.toLowerCase()
+      if (event.altKey && event.shiftKey && key === "t") {
+        event.preventDefault()
+        setSecretControlsVisible((prev) => !prev)
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
     }
   }, [])
 
@@ -357,6 +374,52 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
     }
   }
 
+  const handleGrantTrial = useCallback(async () => {
+    if (!activeTeam) {
+      showErrorToast("Выберите заведение")
+      return
+    }
+    const token = localStorage.getItem("access_token")
+    if (!token) {
+      showErrorToast("Нет доступа. Авторизуйтесь повторно")
+      return
+    }
+    setGrantingTrial(true)
+    try {
+      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/grant-trial`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const raw = await res.text()
+      let data: any = null
+      if (raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          data = null
+        }
+      }
+      if (!res.ok) {
+        const message = parseMessage(data, raw, "Не удалось выдать пробную подписку")
+        showErrorToast(message)
+        return
+      }
+      toast.success("Пробная подписка активирована")
+      setPendingPayment(null)
+      if (data?.subscription) {
+        setSubscription(data.subscription)
+      }
+      await reloadSubscription()
+    } catch (error) {
+      console.error(error)
+      showErrorToast("Не удалось выдать пробную подписку")
+    } finally {
+      setGrantingTrial(false)
+    }
+  }, [activeTeam, reloadSubscription])
+
   const renderPlanPrice = (plan: Plan) => {
     if (plan.price <= 0) return "Бесплатно"
     return formatCurrency(plan.price, plan.currency)
@@ -397,6 +460,20 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
           </span>
         </div>
       </div>
+
+      {secretControlsVisible && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleGrantTrial}
+            disabled={grantingTrial || loading}
+          >
+            {grantingTrial && <Loader2 className="mr-2 size-4 animate-spin" />}
+            {grantingTrial ? "Активируем..." : "Выдать пробную подписку"}
+          </Button>
+        </div>
+      )}
 
       {pendingPayment && (
         <Card className="border-yellow-200 bg-yellow-50">
