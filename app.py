@@ -47,6 +47,8 @@ if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
     Configuration.account_id = YOOKASSA_SHOP_ID
     Configuration.secret_key = YOOKASSA_SECRET_KEY
 
+TESTING_USERS_TOKEN = os.getenv("TESTING_USERS_TOKEN")
+
 
 def format_datetime(value: datetime | None) -> str | None:
     if value is None:
@@ -71,6 +73,7 @@ SUBSCRIPTION_PLANS_DATA = [
             "До 5 блюд в каждой категории",
             "Можно перейти на премиум в любой момент",
         ],
+        "is_hidden": False,
     },
     {
         "code": "trial",
@@ -86,6 +89,7 @@ SUBSCRIPTION_PLANS_DATA = [
         "features": [
             "Полный доступ без ограничений",
         ],
+        "is_hidden": False,
     },
     {
         "code": "premium",
@@ -103,6 +107,24 @@ SUBSCRIPTION_PLANS_DATA = [
             "Без ограничений по блюдам",
             "Поддержка приоритетного уровня",
         ],
+        "is_hidden": False,
+    },
+    {
+        "code": "testing",
+        "name": "Тестирование",
+        "description": "Скрытый тариф для выдачи бесплатного доступа.",
+        "price": 0,
+        "currency": "RUB",
+        "duration_days": None,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": False,
+        "features": [
+            "Полный доступ без ограничений",
+            "Используется для тестовых пользователей",
+        ],
+        "is_hidden": True,
     },
 ]
 
@@ -323,7 +345,8 @@ def init_db():
             item_limit INTEGER,
             is_full_access BOOLEAN NOT NULL DEFAULT 0,
             is_trial BOOLEAN NOT NULL DEFAULT 0,
-            features TEXT
+            features TEXT,
+            is_hidden BOOLEAN NOT NULL DEFAULT 0
         )
     ''')
     c.execute('''
@@ -342,6 +365,10 @@ def init_db():
             FOREIGN KEY (plan_code) REFERENCES subscription_plans (code) ON DELETE CASCADE
         )
     ''')
+    c.execute("PRAGMA table_info(subscription_plans)")
+    subscription_columns = [row[1] for row in c.fetchall()]
+    if "is_hidden" not in subscription_columns:
+        c.execute("ALTER TABLE subscription_plans ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT 0")
     conn.commit()
     conn.close()
 
@@ -352,8 +379,8 @@ def sync_subscription_plans():
     for plan in SUBSCRIPTION_PLANS_DATA:
         c.execute(
             """
-            INSERT INTO subscription_plans (code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO subscription_plans (code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features, is_hidden)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(code) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -364,7 +391,8 @@ def sync_subscription_plans():
                 item_limit = excluded.item_limit,
                 is_full_access = excluded.is_full_access,
                 is_trial = excluded.is_trial,
-                features = excluded.features
+                features = excluded.features,
+                is_hidden = excluded.is_hidden
             """,
             (
                 plan["code"],
@@ -378,6 +406,7 @@ def sync_subscription_plans():
                 int(bool(plan.get("is_full_access"))),
                 int(bool(plan.get("is_trial"))),
                 json.dumps(plan.get("features", [])),
+                int(bool(plan.get("is_hidden"))),
             ),
         )
     conn.commit()
@@ -437,6 +466,7 @@ def list_subscription_plans() -> list[dict]:
         """
         SELECT code, name, description, price, currency, duration_days, category_limit, item_limit, is_full_access, is_trial, features
         FROM subscription_plans
+        WHERE is_hidden IS NULL OR is_hidden = 0
         ORDER BY id ASC
         """
     )
@@ -1164,6 +1194,15 @@ def login(req: RegisterRequest):
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
+
+class CreateTestingUserRequest(BaseModel):
+    token: Optional[str] = None
+    email: EmailStr
+    password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    restaurant_name: Optional[str] = None
+
 @app.post("/api/forgot-password")
 def forgot_password(req: ForgotPasswordRequest):
     conn = sqlite3.connect("users.db")
@@ -1193,6 +1232,131 @@ def reset_password(req: ResetPasswordRequest):
     conn.commit()
     conn.close()
     return {"message": "Пароль успешно обновлён"}
+
+
+@app.post("/api/admin/testing-users")
+def create_testing_user(req: CreateTestingUserRequest):
+    if TESTING_USERS_TOKEN and req.token != TESTING_USERS_TOKEN:
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    email = req.email.lower()
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT email FROM users WHERE email = ?", (email,))
+    existing = c.fetchone()
+    created_user = False
+
+    if existing:
+        updates = []
+        values: List[str] = []
+        if req.first_name is not None:
+            updates.append("first_name = ?")
+            values.append(req.first_name)
+        if req.last_name is not None:
+            updates.append("last_name = ?")
+            values.append(req.last_name)
+        if req.password:
+            updates.append("password_hash = ?")
+            values.append(hash_password(req.password))
+        if updates:
+            values.append(email)
+            query = f"UPDATE users SET {', '.join(updates)} WHERE email = ?"
+            c.execute(query, tuple(values))
+    else:
+        c.execute(
+            """
+            INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                email,
+                hash_password(req.password),
+                True,
+                req.first_name,
+                req.last_name,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        created_user = True
+
+    conn.commit()
+
+    c.execute(
+        "SELECT id FROM restaurants WHERE owner_email = ? ORDER BY id ASC",
+        (email,),
+    )
+    restaurant_rows = c.fetchall()
+
+    if not restaurant_rows:
+        name_value = req.restaurant_name or "Моё заведение"
+        c.execute(
+            """
+            INSERT INTO restaurants (owner_email, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                email,
+                None,
+                name_value,
+                "Описание заведения",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        restaurant_rows = [(c.lastrowid,)]
+
+    conn.commit()
+    conn.close()
+
+    plan = get_subscription_plan_by_code("testing")
+    if not plan:
+        raise HTTPException(status_code=500, detail="Тариф 'тестирование' не найден")
+
+    applied: List[int] = []
+    for (restaurant_id,) in restaurant_rows:
+        ensure_base_subscription(restaurant_id)
+        active = get_active_subscription(restaurant_id)
+        if active and active.get("plan_code") == plan["code"]:
+            applied.append(restaurant_id)
+            continue
+        subscription_id = create_subscription_record(
+            restaurant_id=restaurant_id,
+            plan_code=plan["code"],
+            status="active",
+            amount=0,
+            currency=plan.get("currency", "RUB"),
+            started_at=datetime.utcnow(),
+            expires_at=None,
+        )
+        set_subscription_active(
+            subscription_id=subscription_id,
+            restaurant_id=restaurant_id,
+            plan=plan,
+            amount=0,
+            currency=plan.get("currency", "RUB"),
+            payment_id=None,
+        )
+        applied.append(restaurant_id)
+
+    return {
+        "email": email,
+        "created_user": created_user,
+        "plan_code": plan["code"],
+        "restaurants": applied,
+    }
 
 # === Профиль пользователя (без изменений) ===
 @app.get("/api/me", response_model=UserProfile)
@@ -2102,10 +2266,9 @@ def get_menu_items(restaurant_id: int, category_id: int, current_user: dict = De
     return [format_menu_item_row(row) for row in rows]
 
 
-@app.post("/api/restaurants/{restaurant_id}/menu-categories/{category_id}/import-csv")
-async def import_menu_items_from_csv(
+@app.post("/api/restaurants/{restaurant_id}/menu/import-csv")
+async def import_menu_from_csv(
     restaurant_id: int,
-    category_id: int,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
 ):
@@ -2131,26 +2294,76 @@ async def import_menu_items_from_csv(
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
 
-    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    c.execute(
+        "SELECT id FROM restaurants WHERE id = ? AND owner_email = ?",
+        (restaurant_id, current_user["email"]),
+    )
     if not c.fetchone():
         conn.close()
         raise HTTPException(404, "Заведение не найдено")
 
-    c.execute("SELECT id FROM menu_categories WHERE id = ? AND restaurant_id = ?", (category_id, restaurant_id))
-    if not c.fetchone():
-        conn.close()
-        raise HTTPException(404, "Категория не найдена")
-
     limits = get_subscription_limits(restaurant_id)
+    category_limit = limits.get("category_limit")
     item_limit = limits.get("item_limit")
-    c.execute("SELECT COUNT(*) FROM menu_items WHERE category_id = ?", (category_id,))
-    count_row = c.fetchone()
-    existing_items = count_row[0] if count_row else 0
-    current_items = existing_items
 
-    c.execute("SELECT MAX(placenum) FROM menu_items WHERE category_id = ?", (category_id,))
-    max_placenum_row = c.fetchone()
-    next_placenum = (max_placenum_row[0] or 0) if max_placenum_row else 0
+    c.execute(
+        """
+        SELECT id, name, description, placenum
+        FROM menu_categories
+        WHERE restaurant_id = ?
+        ORDER BY placenum ASC
+        """,
+        (restaurant_id,),
+    )
+    category_rows = c.fetchall()
+
+    existing_categories: dict[str, dict] = {}
+    current_category_count = len(category_rows)
+    next_category_placenum = 0
+    for row in category_rows:
+        name_value = (row[1] or "").strip()
+        if name_value:
+            existing_categories[name_value.lower()] = {
+                "id": row[0],
+                "name": name_value,
+                "description": row[2],
+                "placenum": row[3] or 0,
+            }
+        if row[3] and row[3] > next_category_placenum:
+            next_category_placenum = row[3]
+
+    category_item_counters: dict[int, dict[str, int]] = {}
+    if category_rows:
+        category_ids = [row[0] for row in category_rows]
+        placeholders = ",".join("?" for _ in category_ids)
+        c.execute(
+            f"SELECT category_id, COUNT(*), MAX(placenum) FROM menu_items WHERE category_id IN ({placeholders}) GROUP BY category_id",
+            tuple(category_ids),
+        )
+        for count_row in c.fetchall():
+            category_item_counters[count_row[0]] = {
+                "count": count_row[1] or 0,
+                "placenum": count_row[2] or 0,
+            }
+    for row in category_rows:
+        if row[0] not in category_item_counters:
+            category_item_counters[row[0]] = {"count": 0, "placenum": 0}
+
+    existing_items: dict[int, dict[str, tuple[int, Optional[str]]]] = {}
+    c.execute(
+        """
+        SELECT mi.id, mi.category_id, mi.name, mi.photo
+        FROM menu_items mi
+        JOIN menu_categories mc ON mc.id = mi.category_id
+        WHERE mc.restaurant_id = ?
+        """,
+        (restaurant_id,),
+    )
+    for item_row in c.fetchall():
+        item_name = (item_row[2] or "").strip().lower()
+        if not item_name:
+            continue
+        existing_items.setdefault(item_row[1], {})[item_name] = (item_row[0], item_row[3])
 
     created = 0
     updated = 0
@@ -2200,15 +2413,80 @@ async def import_menu_items_from_csv(
     fats_keys = ["fats", "fat", "жиры", "жир"]
     carbs_keys = ["carbs", "углеводы", "углев", "carbohydrates"]
     status_keys = ["status", "статус"]
+    category_name_keys = [
+        "category",
+        "категория",
+        "category_name",
+        "название категории",
+    ]
+    category_description_keys = [
+        "category_description",
+        "описание категории",
+        "описание кат",
+    ]
 
-    for index, row in enumerate(reader, start=2):  # 2 because header is line 1
+    for index, row in enumerate(reader, start=2):
         normalized = normalize_row(row)
 
-        name = get_value(normalized, name_keys)
-        if not name:
+        category_name = get_value(normalized, category_name_keys)
+        if not category_name:
+            errors.append(f"Строка {index}: отсутствует название категории")
+            continue
+        category_clean = category_name.strip()
+        category_key = category_clean.lower()
+        category_description = get_value(normalized, category_description_keys)
+
+        if category_key in existing_categories:
+            category_info = existing_categories[category_key]
+            category_id = category_info["id"]
+            if category_description and category_description != (category_info.get("description") or ""):
+                c.execute(
+                    "UPDATE menu_categories SET description = ? WHERE id = ?",
+                    (category_description, category_id),
+                )
+                category_info["description"] = category_description
+        else:
+            if category_limit is not None and current_category_count >= category_limit:
+                errors.append(
+                    f"Строка {index}: превышен лимит категорий для текущей подписки"
+                )
+                continue
+            description_value = category_description
+            if description_value is None:
+                for template in MENU_CATEGORIES:
+                    if template["name"].lower() == category_clean.lower():
+                        description_value = template["description"]
+                        break
+            next_category_placenum += 1
+            c.execute(
+                """
+                INSERT INTO menu_categories (restaurant_id, photo, name, description, placenum)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    restaurant_id,
+                    None,
+                    category_clean,
+                    description_value,
+                    next_category_placenum,
+                ),
+            )
+            category_id = c.lastrowid
+            existing_categories[category_key] = {
+                "id": category_id,
+                "name": category_clean,
+                "description": description_value,
+                "placenum": next_category_placenum,
+            }
+            category_item_counters[category_id] = {"count": 0, "placenum": 0}
+            existing_items[category_id] = {}
+            current_category_count += 1
+
+        category_id = existing_categories[category_key]["id"]
+        name_value = get_value(normalized, name_keys)
+        if not name_value:
             errors.append(f"Строка {index}: отсутствует название блюда")
             continue
-
         price_raw = get_value(normalized, price_keys)
         price = parse_float(price_raw)
         if price is None:
@@ -2218,14 +2496,16 @@ async def import_menu_items_from_csv(
         description = get_value(normalized, description_keys)
         calories = parse_int(get_value(normalized, calories_keys))
         weight = parse_float(get_value(normalized, weight_keys))
-
         proteins = parse_float(get_value(normalized, proteins_keys))
         fats = parse_float(get_value(normalized, fats_keys))
         carbs = parse_float(get_value(normalized, carbs_keys))
 
         bju_value = get_value(normalized, bju_keys)
         if bju_value and (proteins is None or fats is None or carbs is None):
-            parts = [part.strip() for part in csv.reader([bju_value.replace("/", ",")], delimiter=",").__next__()]
+            parts = [
+                part.strip()
+                for part in csv.reader([bju_value.replace("/", ",")], delimiter=",").__next__()
+            ]
             parts = [part for part in parts if part != ""]
             if len(parts) == 3:
                 proteins = parse_float(parts[0]) if proteins is None else proteins
@@ -2241,14 +2521,12 @@ async def import_menu_items_from_csv(
             elif status_normalized in {"видимое", "visible", "1", "true", "да"}:
                 view = True
 
-        c.execute(
-            "SELECT id, photo FROM menu_items WHERE category_id = ? AND LOWER(name) = LOWER(?)",
-            (category_id, name),
-        )
-        existing = c.fetchone()
+        item_key = name_value.strip().lower()
+        category_items = existing_items.setdefault(category_id, {})
+        existing_item = category_items.get(item_key)
 
-        if existing:
-            item_id, photo = existing
+        if existing_item:
+            item_id, photo = existing_item
             c.execute(
                 """
                 UPDATE menu_items
@@ -2274,10 +2552,13 @@ async def import_menu_items_from_csv(
                 )
             updated += 1
         else:
-            if item_limit is not None and current_items >= item_limit:
-                errors.append(f"Строка {index}: превышен лимит блюд для текущей подписки")
+            counters = category_item_counters.setdefault(category_id, {"count": 0, "placenum": 0})
+            if item_limit is not None and counters["count"] >= item_limit:
+                errors.append(
+                    f"Строка {index}: превышен лимит блюд для текущей подписки"
+                )
                 continue
-            next_placenum += 1
+            counters["placenum"] += 1
             c.execute(
                 """
                 INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
@@ -2285,7 +2566,7 @@ async def import_menu_items_from_csv(
                 """,
                 (
                     category_id,
-                    name,
+                    name_value,
                     price,
                     description,
                     calories,
@@ -2295,31 +2576,24 @@ async def import_menu_items_from_csv(
                     weight,
                     DEFAULT_MENU_ITEM_PHOTO,
                     int(view),
-                    next_placenum,
+                    counters["placenum"],
                 ),
             )
+            new_id = c.lastrowid
+            counters["count"] += 1
+            category_items[item_key] = (new_id, DEFAULT_MENU_ITEM_PHOTO)
             created += 1
-            current_items += 1
 
     conn.commit()
-
-    c.execute(
-        """
-        SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
-        FROM menu_items WHERE category_id = ? ORDER BY placenum ASC
-        """,
-        (category_id,),
-    )
-    rows = c.fetchall()
     conn.close()
 
-    items = [format_menu_item_row(row).dict() for row in rows]
+    menu_data = get_full_menu(restaurant_id)
 
     return {
         "created": created,
         "updated": updated,
         "errors": errors,
-        "items": items,
+        "categories": menu_data.get("categories", []),
     }
 
 @app.patch("/api/restaurants/{restaurant_id}/menu-items/{item_id}")

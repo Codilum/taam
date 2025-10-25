@@ -210,16 +210,31 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     return { street: parts[0], remainder: parts.slice(1).join(", "), full: raw };
   }, [data?.address]);
 
-  const combinedAddress = useMemo(() => {
-    const values: string[] = [];
-    if (data?.city?.trim()) {
-      values.push(data.city.trim());
+  const addressWithoutCity = useMemo(() => {
+    if (!data?.address) {
+      return "";
     }
-    if (normalizedAddress.full) {
-      values.push(normalizedAddress.full);
+    const raw = data.address.trim();
+    if (!raw) {
+      return "";
     }
-    return values.join(", ");
-  }, [data?.city, normalizedAddress.full]);
+    const parts = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length === 0) {
+      return "";
+    }
+    const cityValue = data?.city?.trim().toLowerCase() || "";
+    if (!cityValue) {
+      return parts.join(", ");
+    }
+    const filtered = parts.filter((part) => part.toLowerCase() !== cityValue);
+    if (filtered.length === 0) {
+      return "";
+    }
+    return filtered.join(", ");
+  }, [data?.address, data?.city]);
 
   // refs для секций категорий
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -1121,7 +1136,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                           Адрес
                         </p>
                         <p className="mt-2 text-base text-gray-900">
-                          {combinedAddress || data.address?.trim() || "—"}
+                          {addressWithoutCity || normalizedAddress.remainder || normalizedAddress.full || data.address?.trim() || "—"}
                         </p>
                       </div>
                       <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">

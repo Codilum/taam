@@ -210,16 +210,31 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     return { street: parts[0], remainder: parts.slice(1).join(", "), full: raw };
   }, [data?.address]);
 
-  const combinedAddress = useMemo(() => {
-    const values: string[] = [];
-    if (data?.city?.trim()) {
-      values.push(data.city.trim());
+  const addressWithoutCity = useMemo(() => {
+    if (!data?.address) {
+      return "";
     }
-    if (normalizedAddress.full) {
-      values.push(normalizedAddress.full);
+    const raw = data.address.trim();
+    if (!raw) {
+      return "";
     }
-    return values.join(", ");
-  }, [data?.city, normalizedAddress.full]);
+    const parts = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length === 0) {
+      return "";
+    }
+    const cityValue = data?.city?.trim().toLowerCase() || "";
+    if (!cityValue) {
+      return parts.join(", ");
+    }
+    const filtered = parts.filter((part) => part.toLowerCase() !== cityValue);
+    if (filtered.length === 0) {
+      return "";
+    }
+    return filtered.join(", ");
+  }, [data?.address, data?.city]);
 
   // refs для секций категорий
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -868,8 +883,19 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   if (isRestaurantIncomplete) {
     return (
-      <div className="flex-1">
+      <div className="flex flex-col bg-gray-100 min-h-screen">
+        <div className="px-4 pt-4">
+          <Alert variant="default">
+            <AlertCircleIcon />
+            <AlertTitle>Необходимо заполнить данные!</AlertTitle>
+            <AlertDescription>
+              Заполните данные заведения: {missingRestaurantFields.join(", ")}
+            </AlertDescription>
+          </Alert>
+        </div>
+        <div className="flex-1">
           <EditData activeTeam={activeTeam} />
+        </div>
       </div>
     );
   }
@@ -1110,17 +1136,23 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                           Адрес
                         </p>
                         <p className="mt-2 text-base text-gray-900">
-                          {combinedAddress || data.address?.trim() || "—"}
+                          {addressWithoutCity || normalizedAddress.remainder || normalizedAddress.full || data.address?.trim() || "—"}
                         </p>
                       </div>
                       <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
                         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Телефон
+                          Улица
                         </p>
                         <p className="mt-2 text-base text-gray-900">
-                          {data.phone?.trim() || "—"}
+                          {normalizedAddress.street || data.address?.trim() || "—"}
                         </p>
                       </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        Телефон
+                      </span>
+                      <span className="text-base text-gray-900">{data.phone?.trim() || "—"}</span>
                     </div>
                   </div>
 
@@ -1130,7 +1162,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                         href={`https://t.me/${data.telegram}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
                       >
                         <Send className="h-5 w-5" />
                       </a>
@@ -1140,7 +1172,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                         href={`https://wa.me/${data.whatsapp}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
                       >
                         <svg
                           xmlns="https://www.w3.org/2000/svg"
@@ -1173,7 +1205,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 </div>
                 {data.photo && (
                   <div className="w-full max-w-xs shrink-0 self-start">
-                    <div className="overflow-hidden rounded-2xl">
+                    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 p-2 shadow-sm">
                       <img
                         src={data.photo}
                         alt={data.name || "Фото заведения"}
