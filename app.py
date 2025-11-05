@@ -49,12 +49,17 @@ if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
 
 TESTING_USERS_TOKEN = os.getenv("TESTING_USERS_TOKEN")
 
+DEFAULT_ADMIN_EMAILS = {"it.mikita@gmail.com"}
+
 raw_admin_emails = os.getenv("ADMIN_EMAILS", "")
-ADMIN_EMAILS = {
-    email.strip().lower()
-    for email in raw_admin_emails.replace(";", ",").split(",")
-    if email.strip()
-}
+ADMIN_EMAILS = {email.strip().lower() for email in DEFAULT_ADMIN_EMAILS if email.strip()}
+ADMIN_EMAILS.update(
+    {
+        email.strip().lower()
+        for email in raw_admin_emails.replace(";", ",").split(",")
+        if email.strip()
+    }
+)
 single_admin_email = os.getenv("ADMIN_EMAIL")
 if single_admin_email:
     ADMIN_EMAILS.add(single_admin_email.strip().lower())
@@ -746,6 +751,7 @@ def load_menu_with_limits(restaurant_id: int) -> tuple[list[dict], dict]:
     )
     category_rows = c.fetchall()
     categories: list[dict] = []
+    auto_hidden_item_ids: set[int] = set()
 
     for cat in category_rows:
         if category_limit is not None and len(categories) >= category_limit:
@@ -771,10 +777,12 @@ def load_menu_with_limits(restaurant_id: int) -> tuple[list[dict], dict]:
         visible_count = 0
         items: list[dict] = []
         for row in item_rows:
-            item = format_menu_item_row(row).dict()
+            item_model = format_menu_item_row(row)
+            item = item_model.dict()
             if item["view"]:
                 if item_limit is not None and visible_count >= item_limit:
                     item["view"] = False
+                    auto_hidden_item_ids.add(item_model.id)
                 else:
                     visible_count += 1
             items.append(item)
@@ -789,6 +797,15 @@ def load_menu_with_limits(restaurant_id: int) -> tuple[list[dict], dict]:
                 "items": items,
             }
         )
+
+    if auto_hidden_item_ids:
+        auto_hidden_ids_ordered = sorted(auto_hidden_item_ids)
+        placeholders = ",".join(["?"] * len(auto_hidden_ids_ordered))
+        conn.execute(
+            f"UPDATE menu_items SET view = 0 WHERE id IN ({placeholders})",
+            tuple(auto_hidden_ids_ordered),
+        )
+        conn.commit()
 
     conn.close()
     return categories, limits
