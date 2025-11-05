@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { CircleCheck, Loader2, RefreshCcw, Sparkles } from "lucide-react"
 import { toast } from "sonner"
+import { motion, AnimatePresence } from "framer-motion"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -95,6 +96,47 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   >(null)
   const [refreshing, setRefreshing] = useState(false)
   const [canceling, setCanceling] = useState(false)
+  const [secretControlsVisible, setSecretControlsVisible] = useState(false)
+  const [grantingTrial, setGrantingTrial] = useState(false)
+  const [keySequence, setKeySequence] = useState<string[]>([])
+  const [showKeyIndicator, setShowKeyIndicator] = useState(false)
+
+  // Обработчик горячих клавиш
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const key = event.key?.toLowerCase()
+      
+      // Добавляем клавишу в последовательность
+      setKeySequence(prev => {
+        const newSequence = [...prev, key].slice(-3) // Храним только последние 3 клавиши
+        return newSequence
+      })
+
+      // Показываем индикатор на короткое время
+      // setShowKeyIndicator(true)
+      setTimeout(() => setShowKeyIndicator(false), 1000)
+
+      // Проверяем комбинацию Alt+T или Option+T
+      if ((event.altKey || event.metaKey) && key === '†') {
+        event.preventDefault()
+        setSecretControlsVisible((prev) => !prev)
+        setKeySequence([]) // Сбрасываем последовательность после активации
+      }
+
+      // Альтернативная активация: последовательность "show"
+      const currentSequence = [...keySequence, key].slice(-4).join('')
+      if (currentSequence.includes('show')) {
+        event.preventDefault()
+        setSecretControlsVisible((prev) => !prev)
+        setKeySequence([])
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [keySequence])
 
   useEffect(() => {
     let cancelled = false
@@ -357,6 +399,52 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
     }
   }
 
+  const handleGrantTrial = useCallback(async () => {
+    if (!activeTeam) {
+      showErrorToast("Выберите заведение")
+      return
+    }
+    const token = localStorage.getItem("access_token")
+    if (!token) {
+      showErrorToast("Нет доступа. Авторизуйтесь повторно")
+      return
+    }
+    setGrantingTrial(true)
+    try {
+      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/grant-trial`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      const raw = await res.text()
+      let data: any = null
+      if (raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          data = null
+        }
+      }
+      if (!res.ok) {
+        const message = parseMessage(data, raw, "Не удалось выдать пробную подписку")
+        showErrorToast(message)
+        return
+      }
+      toast.success("Пробная подписка активирована")
+      setPendingPayment(null)
+      if (data?.subscription) {
+        setSubscription(data.subscription)
+      }
+      await reloadSubscription()
+    } catch (error) {
+      console.error(error)
+      showErrorToast("Не удалось выдать пробную подписку")
+    } finally {
+      setGrantingTrial(false)
+    }
+  }, [activeTeam, reloadSubscription])
+
   const renderPlanPrice = (plan: Plan) => {
     if (plan.price <= 0) return "Бесплатно"
     return formatCurrency(plan.price, plan.currency)
@@ -382,7 +470,35 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+    <div className="flex flex-1 flex-col gap-4 p-4 pt-0 relative">
+      {/* Индикатор ввода клавиш */}
+      <AnimatePresence>
+        {showKeyIndicator && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8, y: -20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: -20 }}
+            className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border rounded-lg p-3 shadow-lg"
+          >
+            <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-1">
+                {keySequence.slice(-3).map((key, index) => (
+                  <motion.span
+                    key={index}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="bg-muted px-2 py-1 rounded border text-xs font-mono min-w-6 text-center"
+                  >
+                    {key}
+                  </motion.span>
+                ))}
+              </div>
+              <span className="text-muted-foreground">Нажмите Alt+T для секретных настроек</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-xl font-bold">Тарифы</h2>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -397,6 +513,29 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
           </span>
         </div>
       </div>
+
+      <AnimatePresence>
+        {secretControlsVisible && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGrantTrial}
+                disabled={grantingTrial || loading}
+              >
+                {grantingTrial && <Loader2 className="mr-2 size-4 animate-spin" />}
+                {grantingTrial ? "Активируем..." : "Выдать пробную подписку"}
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {pendingPayment && (
         <Card className="border-yellow-200 bg-yellow-50">

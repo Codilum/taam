@@ -1141,18 +1141,12 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                       </div>
                       <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
                         <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Улица
+                          Телефон
                         </p>
                         <p className="mt-2 text-base text-gray-900">
-                          {normalizedAddress.street || data.address?.trim() || "—"}
+                          {data.phone?.trim() || "—"}
                         </p>
                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        Телефон
-                      </span>
-                      <span className="text-base text-gray-900">{data.phone?.trim() || "—"}</span>
                     </div>
                   </div>
 

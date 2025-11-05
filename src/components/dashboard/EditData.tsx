@@ -441,7 +441,7 @@ export default function EditData({ activeTeam }: { activeTeam: string }) {
     <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
       <h2 className="text-xl font-bold">Изменить данные</h2>
       {missingRestaurantFields.length > 0 && (
-        <Alert className="border border-yellow-200 bg-yellow-50 text-yellow-900">
+        <Alert variant="default">
           <AlertCircle className="size-4" />
           <AlertTitle>Заполните обязательные поля</AlertTitle>
           <AlertDescription>

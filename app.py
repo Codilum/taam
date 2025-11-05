@@ -39,8 +39,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 DEFAULT_MENU_ITEM_PHOTO = "https://cdn0.iconfinder.com/data/icons/iconic-kitchen-stuffs-3/64/Kitchen_line_icon_-_expand_-_62px_Tudung_Saji-1024.png"
 
 
-YOOKASSA_SHOP_ID = '1192183'
-YOOKASSA_SECRET_KEY = 'test_VXgfeea-HbtyKEHWXn8Q4uDl0P-4dvsa34QJ-7EwRL0'
+YOOKASSA_SHOP_ID = '1186945'
+YOOKASSA_SECRET_KEY = 'live_aJYr7cT3tWqREG6lHzrQ8MvXBurdTAvfmUFlzXeHV_w'
 YOOKASSA_RETURN_URL = os.getenv("YOOKASSA_RETURN_URL", "https://taam.menu/dashboard?block=subscription")
 
 if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
@@ -2413,6 +2413,7 @@ async def import_menu_from_csv(
     fats_keys = ["fats", "fat", "жиры", "жир"]
     carbs_keys = ["carbs", "углеводы", "углев", "carbohydrates"]
     status_keys = ["status", "статус"]
+    photo_keys = ["photo", "фото", "изображение", "картинка", "image_url", "image"]
     category_name_keys = [
         "category",
         "категория",
@@ -2500,6 +2501,12 @@ async def import_menu_from_csv(
         fats = parse_float(get_value(normalized, fats_keys))
         carbs = parse_float(get_value(normalized, carbs_keys))
 
+        photo_raw = get_value(normalized, photo_keys)
+        if isinstance(photo_raw, str):
+            photo_value = photo_raw.strip() or None
+        else:
+            photo_value = None
+
         bju_value = get_value(normalized, bju_keys)
         if bju_value and (proteins is None or fats is None or carbs is None):
             parts = [
@@ -2545,11 +2552,20 @@ async def import_menu_from_csv(
                     item_id,
                 ),
             )
-            if not photo:
+            if photo_value:
+                c.execute(
+                    "UPDATE menu_items SET photo = ? WHERE id = ?",
+                    (photo_value, item_id),
+                )
+                category_items[item_key] = (item_id, photo_value)
+            elif not photo:
                 c.execute(
                     "UPDATE menu_items SET photo = ? WHERE id = ?",
                     (DEFAULT_MENU_ITEM_PHOTO, item_id),
                 )
+                category_items[item_key] = (item_id, DEFAULT_MENU_ITEM_PHOTO)
+            else:
+                category_items[item_key] = (item_id, photo)
             updated += 1
         else:
             counters = category_item_counters.setdefault(category_id, {"count": 0, "placenum": 0})
@@ -2559,6 +2575,7 @@ async def import_menu_from_csv(
                 )
                 continue
             counters["placenum"] += 1
+            stored_photo = photo_value or DEFAULT_MENU_ITEM_PHOTO
             c.execute(
                 """
                 INSERT INTO menu_items (category_id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum)
@@ -2574,14 +2591,14 @@ async def import_menu_from_csv(
                     fats,
                     carbs,
                     weight,
-                    DEFAULT_MENU_ITEM_PHOTO,
+                    stored_photo,
                     int(view),
                     counters["placenum"],
                 ),
             )
             new_id = c.lastrowid
             counters["count"] += 1
-            category_items[item_key] = (new_id, DEFAULT_MENU_ITEM_PHOTO)
+            category_items[item_key] = (new_id, stored_photo)
             created += 1
 
     conn.commit()
@@ -2878,6 +2895,40 @@ def create_restaurant_subscription(
         "plan_code": plan_code,
         "plan_name": plan.get("name") if plan else None,
         "existing": False,
+    }
+
+
+@app.post("/api/restaurants/{restaurant_id}/subscription/grant-trial")
+def grant_trial_subscription(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_restaurant_access(restaurant_id, current_user["email"])
+    plan = get_subscription_plan_by_code("trial")
+    if not plan:
+        raise HTTPException(status_code=404, detail="Пробная подписка недоступна")
+
+    active = get_active_subscription(restaurant_id)
+    if active and active.get("plan_code") not in {"base", "trial"}:
+        raise HTTPException(status_code=400, detail="Нельзя заменить активную платную подписку")
+
+    subscription_id = create_subscription_record(
+        restaurant_id=restaurant_id,
+        plan_code=plan["code"],
+        status="pending",
+        amount=0,
+        currency=plan.get("currency", "RUB"),
+    )
+    set_subscription_active(
+        subscription_id=subscription_id,
+        restaurant_id=restaurant_id,
+        plan=plan,
+        amount=0,
+        currency=plan.get("currency", "RUB"),
+    )
+
+    subscription = get_active_subscription(restaurant_id)
+    return {
+        "status": "active",
+        "subscription": format_subscription_payload(subscription),
+        "limits": get_subscription_limits(restaurant_id),
     }
 
 
