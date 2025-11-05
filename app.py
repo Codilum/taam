@@ -49,6 +49,27 @@ if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
 
 TESTING_USERS_TOKEN = os.getenv("TESTING_USERS_TOKEN")
 
+raw_admin_emails = os.getenv("ADMIN_EMAILS", "")
+ADMIN_EMAILS = {
+    email.strip().lower()
+    for email in raw_admin_emails.replace(";", ",").split(",")
+    if email.strip()
+}
+single_admin_email = os.getenv("ADMIN_EMAIL")
+if single_admin_email:
+    ADMIN_EMAILS.add(single_admin_email.strip().lower())
+
+
+def ensure_admin_access(email: str) -> None:
+    normalized = (email or "").strip().lower()
+    if not ADMIN_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail="Админ-панель не настроена. Укажите ADMIN_EMAIL или ADMIN_EMAILS в настройках сервера.",
+        )
+    if not normalized or normalized not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к админ-панели")
+
 
 def format_datetime(value: datetime | None) -> str | None:
     if value is None:
@@ -95,7 +116,7 @@ SUBSCRIPTION_PLANS_DATA = [
         "code": "premium",
         "name": "Премиум",
         "description": "Полный доступ на месяц.",
-        "price": 299900,
+        "price": 149000,
         "currency": "RUB",
         "duration_days": 30,
         "category_limit": None,
@@ -705,6 +726,72 @@ def get_subscription_limits(restaurant_id: int) -> dict:
         }
     # Без подписки действует базовое ограничение
     return {"category_limit": 3, "item_limit": 5}
+
+
+def load_menu_with_limits(restaurant_id: int) -> tuple[list[dict], dict]:
+    limits = get_subscription_limits(restaurant_id)
+    category_limit = limits.get("category_limit")
+    item_limit = limits.get("item_limit")
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT id, photo, name, description, placenum
+        FROM menu_categories
+        WHERE restaurant_id = ?
+        ORDER BY placenum ASC
+        """,
+        (restaurant_id,),
+    )
+    category_rows = c.fetchall()
+    categories: list[dict] = []
+
+    for cat in category_rows:
+        if category_limit is not None and len(categories) >= category_limit:
+            break
+        category_id = cat[0]
+        category_photo = build_photo_url(cat[1])
+        category_name = cat[2]
+        category_description = cat[3]
+        category_placenum = cat[4]
+
+        items_cursor = conn.cursor()
+        items_cursor.execute(
+            """
+            SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
+            FROM menu_items
+            WHERE category_id = ?
+            ORDER BY placenum ASC
+            """,
+            (category_id,),
+        )
+        item_rows = items_cursor.fetchall()
+
+        visible_count = 0
+        items: list[dict] = []
+        for row in item_rows:
+            item = format_menu_item_row(row).dict()
+            if item["view"]:
+                if item_limit is not None and visible_count >= item_limit:
+                    item["view"] = False
+                else:
+                    visible_count += 1
+            items.append(item)
+
+        categories.append(
+            {
+                "id": category_id,
+                "photo": category_photo,
+                "name": category_name,
+                "description": category_description,
+                "placenum": category_placenum,
+                "items": items,
+            }
+        )
+
+    conn.close()
+    return categories, limits
 
 
 def list_restaurant_subscriptions(restaurant_id: int) -> list[dict]:
@@ -1358,6 +1445,188 @@ def create_testing_user(req: CreateTestingUserRequest):
         "restaurants": applied,
     }
 
+
+@app.get("/api/admin/overview")
+def get_admin_overview(current_user: dict = Depends(get_current_user)):
+    ensure_admin_access(current_user["email"])
+
+    conn = sqlite3.connect("users.db")
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    summary = {}
+    summary["total_users"] = int(c.execute("SELECT COUNT(*) FROM users").fetchone()[0] or 0)
+    summary["total_restaurants"] = int(c.execute("SELECT COUNT(*) FROM restaurants").fetchone()[0] or 0)
+    summary["active_subscriptions"] = int(
+        c.execute("SELECT COUNT(*) FROM restaurant_subscriptions WHERE status = 'active'").fetchone()[0] or 0
+    )
+    summary["active_paid_subscriptions"] = int(
+        c.execute(
+            """
+            SELECT COUNT(*)
+            FROM restaurant_subscriptions rs
+            JOIN subscription_plans sp ON sp.code = rs.plan_code
+            WHERE rs.status = 'active' AND sp.price > 0
+            """
+        ).fetchone()[0]
+        or 0
+    )
+    summary["active_trial_subscriptions"] = int(
+        c.execute(
+            """
+            SELECT COUNT(*)
+            FROM restaurant_subscriptions rs
+            JOIN subscription_plans sp ON sp.code = rs.plan_code
+            WHERE rs.status = 'active' AND sp.is_trial = 1
+            """
+        ).fetchone()[0]
+        or 0
+    )
+    summary["pending_payments"] = int(
+        c.execute("SELECT COUNT(*) FROM restaurant_subscriptions WHERE status = 'pending'").fetchone()[0] or 0
+    )
+
+    users_cursor = conn.cursor()
+    users_cursor.execute(
+        """
+        SELECT email, verified, first_name, last_name, phone, payment_method_type, payment_method_number
+        FROM users
+        ORDER BY email ASC
+        """
+    )
+    users = [
+        {
+            "email": row["email"],
+            "verified": bool(row["verified"]),
+            "first_name": row["first_name"],
+            "last_name": row["last_name"],
+            "phone": row["phone"],
+            "payment_method_type": row["payment_method_type"],
+            "payment_method_number": row["payment_method_number"],
+        }
+        for row in users_cursor.fetchall()
+    ]
+
+    restaurants_cursor = conn.cursor()
+    restaurants_cursor.execute(
+        """
+        SELECT id, owner_email, name, city, address, subdomain
+        FROM restaurants
+        ORDER BY id ASC
+        """
+    )
+    restaurants: list[dict] = []
+    for row in restaurants_cursor.fetchall():
+        restaurant_id = row["id"]
+        owner_email = row["owner_email"]
+        restaurant_name = row["name"]
+
+        counts_cursor = conn.cursor()
+        counts_cursor.execute("SELECT COUNT(*) FROM menu_categories WHERE restaurant_id = ?", (restaurant_id,))
+        category_count = int(counts_cursor.fetchone()[0] or 0)
+        counts_cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM menu_items mi
+            JOIN menu_categories mc ON mi.category_id = mc.id
+            WHERE mc.restaurant_id = ?
+            """,
+            (restaurant_id,),
+        )
+        item_count = int(counts_cursor.fetchone()[0] or 0)
+        counts_cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM menu_items mi
+            JOIN menu_categories mc ON mi.category_id = mc.id
+            WHERE mc.restaurant_id = ? AND mi.view = 1
+            """,
+            (restaurant_id,),
+        )
+        visible_items = int(counts_cursor.fetchone()[0] or 0)
+
+        active_subscription = get_active_subscription(restaurant_id)
+        latest_subscription = get_latest_subscription(restaurant_id)
+        if active_subscription:
+            plan = active_subscription.get("plan", {})
+            if plan.get("is_full_access"):
+                limits = {"category_limit": None, "item_limit": None}
+            else:
+                limits = {
+                    "category_limit": plan.get("category_limit"),
+                    "item_limit": plan.get("item_limit"),
+                }
+        else:
+            limits = {"category_limit": 3, "item_limit": 5}
+
+        restaurants.append(
+            {
+                "id": restaurant_id,
+                "name": restaurant_name,
+                "city": row["city"],
+                "address": row["address"],
+                "owner_email": owner_email,
+                "subdomain": row["subdomain"],
+                "category_count": category_count,
+                "item_count": item_count,
+                "visible_items": visible_items,
+                "active_subscription": format_subscription_payload(active_subscription),
+                "latest_subscription": format_subscription_payload(latest_subscription),
+                "limits": limits,
+            }
+        )
+
+    subscriptions_cursor = conn.cursor()
+    subscriptions_cursor.execute(
+        """
+        SELECT rs.id, rs.restaurant_id, rs.plan_code, rs.status, rs.created_at, rs.started_at, rs.expires_at,
+               rs.amount, rs.currency, rs.payment_id,
+               r.name AS restaurant_name,
+               sp.name AS plan_name,
+               sp.price AS plan_price,
+               sp.is_trial AS plan_is_trial
+        FROM restaurant_subscriptions rs
+        JOIN restaurants r ON r.id = rs.restaurant_id
+        JOIN subscription_plans sp ON sp.code = rs.plan_code
+        ORDER BY datetime(rs.created_at) DESC, rs.id DESC
+        LIMIT 50
+        """
+    )
+    subscriptions: list[dict] = []
+    for row in subscriptions_cursor.fetchall():
+        amount_minor = row["amount"] or 0
+        subscriptions.append(
+            {
+                "id": row["id"],
+                "restaurant_id": row["restaurant_id"],
+                "restaurant_name": row["restaurant_name"],
+                "plan_code": row["plan_code"],
+                "plan_name": row["plan_name"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "started_at": row["started_at"],
+                "expires_at": row["expires_at"],
+                "amount_minor": amount_minor,
+                "amount": amount_minor / 100 if amount_minor else 0,
+                "currency": row["currency"] or "RUB",
+                "payment_id": row["payment_id"],
+                "is_trial": bool(row["plan_is_trial"]),
+            }
+        )
+
+    conn.close()
+
+    plans = [format_plan_response(plan) for plan in list_subscription_plans()]
+
+    return {
+        "summary": summary,
+        "users": users,
+        "restaurants": restaurants,
+        "subscriptions": subscriptions,
+        "plans": plans,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
 # === Профиль пользователя (без изменений) ===
 @app.get("/api/me", response_model=UserProfile)
 def read_me(current_user: dict = Depends(get_current_user)):
@@ -1642,44 +1911,8 @@ def get_restaurant(restaurant_id: int):
 
 @app.get("/api/restaurants/{restaurant_id}/menu")
 def get_full_menu(restaurant_id: int):
-    conn = sqlite3.connect("users.db")
-    c = conn.cursor()
-
-    # Получаем категории
-    c.execute("""
-        SELECT id, photo, name, description, placenum 
-        FROM menu_categories 
-        WHERE restaurant_id = ? 
-        ORDER BY placenum ASC
-    """, (restaurant_id,))
-    categories = []
-
-    for cat in c.fetchall():
-        category_id = cat[0]
-        photo_url = build_photo_url(cat[1])
-
-        # Получаем блюда этой категории
-        c.execute("""
-            SELECT id, name, price, description, calories, proteins, fats, carbs, weight, photo, view, placenum
-            FROM menu_items 
-            WHERE category_id = ? 
-            ORDER BY placenum ASC
-        """, (category_id,))
-        items = []
-        for row in c.fetchall():
-            items.append(format_menu_item_row(row).dict())
-
-        categories.append({
-            "id": category_id,
-            "photo": photo_url,
-            "name": cat[2],
-            "description": cat[3],
-            "placenum": cat[4],
-            "items": items
-        })
-
-    conn.close()
-    return {"categories": categories}
+    categories, limits = load_menu_with_limits(restaurant_id)
+    return {"categories": categories, "limits": limits}
 
 
 @app.patch("/api/restaurants/{restaurant_id}")
@@ -2013,57 +2246,48 @@ def get_restaurant_by_subdomain(subdomain: str):
 def get_menu_by_subdomain(subdomain: str):
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
-    
+
     # Сначала находим ресторан по субдомену
     c.execute("SELECT id FROM restaurants WHERE subdomain = ?", (subdomain,))
     restaurant_row = c.fetchone()
     if not restaurant_row:
         conn.close()
         raise HTTPException(status_code=404, detail="Ресторан не найден")
-    
+
     restaurant_id = restaurant_row[0]
-    
-    # Получаем категории меню
-    c.execute("""
-        SELECT id, name, position, hidden
-        FROM menu_categories
-        WHERE restaurant_id = ? AND hidden = 0
-        ORDER BY position ASC
-    """, (restaurant_id,))
-    categories = []
-    for cat_row in c.fetchall():
-        category_id, name, position, hidden = cat_row
-        
-        # Получаем блюда для категории
-        c.execute("""
-            SELECT id, name, description, price, photo, position
-            FROM menu_items
-            WHERE category_id = ? AND hidden = 0
-            ORDER BY position ASC
-        """, (category_id,))
-        items = []
-        for item_row in c.fetchall():
-            item_id, item_name, description, price, photo, position = item_row
-            photo_url = f"/uploads/{photo}" if photo else None
-            items.append({
-                "id": item_id,
-                "name": item_name,
-                "description": description,
-                "price": price,
-                "photo": photo_url,
-                "position": position
-            })
-        
-        categories.append({
-            "id": category_id,
-            "name": name,
-            "position": position,
-            "items": items
-        })
-    
+    categories, limits = load_menu_with_limits(restaurant_id)
     conn.close()
-    
-    return {"restaurant_id": restaurant_id, "categories": categories}
+
+    public_categories: list[dict] = []
+    for category in categories:
+        visible_items = [
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "description": item.get("description"),
+                "price": item["price"],
+                "photo": item.get("photo"),
+                "placenum": item["placenum"],
+                "position": item["placenum"],
+            }
+            for item in category["items"]
+            if item["view"]
+        ]
+        if not visible_items:
+            continue
+        public_categories.append(
+            {
+                "id": category["id"],
+                "name": category["name"],
+                "description": category.get("description"),
+                "photo": category.get("photo"),
+                "placenum": category["placenum"],
+                "position": category["placenum"],
+                "items": visible_items,
+            }
+        )
+
+    return {"restaurant_id": restaurant_id, "categories": public_categories, "limits": limits}
 
 
 # === Меню: Блюда ===
@@ -2630,15 +2854,21 @@ def update_menu_item(
         raise HTTPException(status_code=404, detail="Заведение не найдено")
 
     # Проверка, что блюдо существует в ресторане
-    c.execute("""
-        SELECT mi.id 
+    c.execute(
+        """
+        SELECT mi.category_id, mi.view
         FROM menu_items mi
         JOIN menu_categories mc ON mi.category_id = mc.id
         WHERE mi.id = ? AND mc.restaurant_id = ?
-    """, (item_id, restaurant_id))
-    if not c.fetchone():
+        """,
+        (item_id, restaurant_id),
+    )
+    row = c.fetchone()
+    if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Блюдо не найдено")
+    current_category_id = row[0]
+    current_view = bool(row[1])
 
     # Формируем части запроса для обновления только переданных полей
     fields = []
@@ -2653,6 +2883,7 @@ def update_menu_item(
     if req.price is not None:
         fields.append("price = ?")
         values.append(req.price)
+    target_category_id = current_category_id
     if req.category_id is not None:
         c.execute("SELECT id FROM menu_categories WHERE id = ? AND restaurant_id = ?", (req.category_id, restaurant_id))
         if not c.fetchone():
@@ -2660,6 +2891,26 @@ def update_menu_item(
             raise HTTPException(status_code=404, detail="Категория не найдена в этом ресторане")
         fields.append("category_id = ?")
         values.append(req.category_id)
+        target_category_id = req.category_id
+    if req.view is not None and req.view:
+        limits = get_subscription_limits(restaurant_id)
+        item_limit = limits.get("item_limit")
+        if item_limit is not None:
+            c.execute(
+                """
+                SELECT COUNT(*)
+                FROM menu_items
+                WHERE category_id = ? AND view = 1 AND id != ?
+                """,
+                (target_category_id, item_id),
+            )
+            visible_count = c.fetchone()[0] or 0
+            if (not current_view or target_category_id != current_category_id) and visible_count >= item_limit:
+                conn.close()
+                raise HTTPException(
+                    status_code=403,
+                    detail="Достигнут лимит видимых блюд для текущего тарифа. Снимите видимость с других блюд или обновите подписку.",
+                )
     if req.view is not None:
         fields.append("view = ?")
         values.append(int(req.view))
@@ -2825,6 +3076,17 @@ def create_restaurant_subscription(
     active = get_active_subscription(restaurant_id)
     if plan.get("is_trial") and active and active.get("plan_code") == plan_code:
         raise HTTPException(status_code=400, detail="Пробная подписка уже активна")
+
+    if plan_code == "base" and active:
+        active_plan = active.get("plan") or {}
+        active_amount = active.get("amount") or 0
+        is_trial = bool(active_plan.get("is_trial"))
+        plan_price_minor = active_plan.get("price") or 0
+        if not is_trial and (plan_price_minor > 0 or active_amount > 0):
+            raise HTTPException(
+                status_code=400,
+                detail="Нельзя перейти на базовый тариф, пока действует оплаченная подписка",
+            )
 
     amount_minor = plan.get("price", 0) or 0
     currency = plan.get("currency", "RUB")

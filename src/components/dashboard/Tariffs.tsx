@@ -221,10 +221,26 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
 
   const activePlanCode = subscription?.plan_code || null
   const currentStatus = subscription?.status || null
+  const activePlan = useMemo(
+    () => plans.find(plan => plan.code === activePlanCode) ?? null,
+    [plans, activePlanCode],
+  )
+  const hasPaidActiveSubscription = useMemo(() => {
+    if (!subscription || subscription.status !== "active") return false
+    if (activePlan) {
+      if (activePlan.is_trial) return false
+      return (activePlan.price || 0) > 0
+    }
+    return (subscription.amount || 0) > 0
+  }, [subscription, activePlan])
 
   const handleSubscribe = async (planCode: string) => {
     if (!activeTeam) {
       showErrorToast("Выберите заведение")
+      return
+    }
+    if (planCode === "base" && hasPaidActiveSubscription) {
+      toast.error("Нельзя перейти на базовый тариф, пока действует оплаченная подписка")
       return
     }
     const token = localStorage.getItem("access_token")
@@ -595,6 +611,7 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
               const features = Array.from(new Set(combined))
               const isActive = activePlanCode === plan.code && currentStatus === "active"
               const isProcessing = processingPlan === plan.code
+              const downgradeRestricted = plan.code === "base" && hasPaidActiveSubscription
 
               return (
                 <Card
@@ -619,6 +636,11 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
                         Длительность: {plan.duration_days} дн.
                       </p>
                     )}
+                    {downgradeRestricted && (
+                      <p className="mt-2 text-sm text-destructive">
+                        Нельзя перейти на базовый тариф, пока действует оплаченная подписка.
+                      </p>
+                    )}
                   </CardHeader>
                   <CardContent>
                     <Separator className="mb-4" />
@@ -635,12 +657,14 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
                     <Button
                       className="w-full"
                       onClick={() => handleSubscribe(plan.code)}
-                      disabled={isActive || isProcessing || loading}
+                      disabled={isActive || isProcessing || loading || downgradeRestricted}
                     >
                       {isActive
                         ? "Текущий тариф"
                         : isProcessing
                         ? "Оформляем..."
+                        : downgradeRestricted
+                        ? "Недоступно"
                         : "Оформить подписку"}
                     </Button>
                   </CardFooter>

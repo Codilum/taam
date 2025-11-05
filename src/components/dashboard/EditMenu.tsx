@@ -573,12 +573,26 @@ export default function EditMenu({ activeTeam }: { activeTeam: string }) {
         }
       );
       
-      if (res.ok) {
-        setItems(items.map(item => 
-          item.id === itemId ? { ...item, view: !currentView } : item
-        ));
-        toast.success("Видимость блюда изменена");
+      if (!res.ok) {
+        const raw = await res.text();
+        let message = "Ошибка при изменении видимости";
+        if (raw) {
+          try {
+            const data = JSON.parse(raw);
+            if (data?.detail) message = data.detail;
+            else if (typeof data === "string") message = data;
+          } catch {
+            message = raw;
+          }
+        }
+        showErrorToast(message);
+        return;
       }
+
+      setItems(items.map(item =>
+        item.id === itemId ? { ...item, view: !currentView } : item
+      ));
+      toast.success("Видимость блюда изменена");
     } catch (error) {
       showErrorToast("Ошибка при изменении видимости");
     }
