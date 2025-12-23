@@ -63,6 +63,14 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
         loadStats()
     }, [loadStats])
 
+    const chartPoints = (stats?.chart_data || []).map((point) => ({
+        ...point,
+        orders: Number(point.orders || 0),
+        revenue: Number(point.revenue || 0)
+    }))
+    const visibleChartPoints = chartPoints.slice(-14)
+    const maxOrders = visibleChartPoints.length > 0 ? Math.max(...visibleChartPoints.map((p) => p.orders)) : 0
+
     if (!activeTeam) {
         return (
             <div className="flex flex-1 flex-col gap-4 p-4">
@@ -136,9 +144,8 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
                             </CardHeader>
                             <CardContent>
                                 <div className="h-[300px] flex items-end gap-2">
-                                    {stats.chart_data.length > 0 ? (
-                                        stats.chart_data.slice(-14).map((point, idx) => {
-                                            const maxOrders = Math.max(...stats.chart_data.map(p => p.orders))
+                                    {visibleChartPoints.length > 0 ? (
+                                        visibleChartPoints.map((point, idx) => {
                                             const height = maxOrders > 0 ? (point.orders / maxOrders) * 100 : 0
                                             return (
                                                 <div key={idx} className="flex-1 flex flex-col items-center gap-1">
