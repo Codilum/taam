@@ -70,7 +70,25 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
             revenue: Number(point.revenue || 0)
         }))
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-    const visibleChartPoints = chartPoints.slice(-14)
+
+    const periodLengthMap: Record<StatsPeriod, number> = {
+        day: 1,
+        week: 7,
+        month: 30,
+        year: 365,
+    }
+
+    const periodLength = periodLengthMap[period] || 30
+    const today = new Date()
+    const filledChartPoints = Array.from({ length: periodLength }).map((_, idx) => {
+        const day = new Date(today)
+        day.setDate(today.getDate() - (periodLength - idx - 1))
+        const dateKey = day.toISOString().slice(0, 10)
+        const existing = chartPoints.find((point) => point.date === dateKey)
+        return existing || { date: dateKey, orders: 0, revenue: 0 }
+    })
+
+    const visibleChartPoints = filledChartPoints.slice(-14)
     const maxOrdersValue = visibleChartPoints.reduce((max, p) => Math.max(max, p.orders), 0)
     const safeMaxOrders = maxOrdersValue > 0 ? maxOrdersValue : 1
 
