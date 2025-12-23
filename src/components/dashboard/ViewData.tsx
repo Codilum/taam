@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Instagram, Send, ShoppingCart, Check, Loader2, Trash2, ArrowLeft, Plus, Minus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getCurrencySymbol } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -264,6 +264,12 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     desiredTime: ''
   };
   const [formData, setFormData] = useState(initialFormState);
+
+  const currencySymbol = useMemo(
+    () => getCurrencySymbol(data?.currency || 'RUB'),
+    [data?.currency]
+  );
+  const formatPrice = useCallback((amount: number) => `${amount} ${currencySymbol}`, [currencySymbol]);
 
   const cartKey = `taam_cart_${activeTeam}`;
   const normalizedSearch = searchValue.trim().toLowerCase();
@@ -797,7 +803,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                             {item.weight && <span className="text-[10px] text-gray-500 pt-0.5">{item.weight}гр</span>}
                           </div>
                           <div className="mt-auto pt-3 flex flex-col gap-2">
-                            <span className="font-bold">{item.price} ₽</span>
+                            <span className="font-bold">{formatPrice(item.price)}</span>
                             {qty > 0 ? (
                               <div className="flex items-center gap-1">
                                 <Button size="sm" variant="secondary" className="h-7" onClick={(e) => { e.stopPropagation(); decreaseCartItem(item.id); }}>−</Button>
@@ -861,14 +867,14 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                       </div>
                       <div className="flex-1 flex flex-col">
                         <span className="text-sm font-semibold line-clamp-1">{item.name}</span>
-                        <span className="text-xs text-gray-500">{item.price} ₽</span>
+                        <span className="text-xs text-gray-500">{formatPrice(item.price)}</span>
                         <div className="mt-auto flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <button onClick={() => decreaseCartItem(item.id)} className="w-6 h-6 rounded-lg bg-white border flex items-center justify-center text-sm shadow-sm">-</button>
                             <span className="text-sm font-bold">{item.quantity}</span>
                             <button onClick={() => addToCart(item.id)} className="w-6 h-6 rounded-lg bg-[#FFEB5A] flex items-center justify-center text-sm shadow-sm">+</button>
                           </div>
-                          <span className="text-sm font-bold">{item.price * item.quantity} ₽</span>
+                          <span className="text-sm font-bold">{formatPrice(item.price * item.quantity)}</span>
                         </div>
                       </div>
                     </div>
@@ -877,7 +883,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 <div className="pt-4 border-t space-y-4">
                   <div className="flex justify-between items-center px-1">
                     <span className="text-gray-500">Сумма заказа</span>
-                    <span className="text-xl font-black">{totalPrice} ₽</span>
+                    <span className="text-xl font-black">{formatPrice(totalPrice)}</span>
                   </div>
                   <Button className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800" onClick={() => setCartStep(2)}>Перейти к оформлению</Button>
                 </div>
@@ -1050,7 +1056,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"
                     onClick={handleSubmitOrder}
                   >
-                    {isSubmitting ? <Loader2 className="animate-spin" /> : `Заказать на ${totalPrice} ₽`}
+                    {isSubmitting ? <Loader2 className="animate-spin" /> : `Заказать на ${formatPrice(totalPrice)}`}
                   </Button>
                   <button onClick={() => setCartStep(2)} className="text-xs font-medium text-gray-400 py-1">Вернуться к доставке</button>
                 </div>
@@ -1069,7 +1075,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 <div className="bg-gray-50 p-4 rounded-2xl text-left text-sm space-y-2">
                   <div className="flex justify-between"><span>Клиент:</span><span className="font-bold">{formData.name}</span></div>
                   <div className="flex justify-between"><span>Тип:</span><span className="font-bold">{deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span></div>
-                  <div className="flex justify-between"><span>Сумма:</span><span className="font-bold">{totalPrice} ₽</span></div>
+                  <div className="flex justify-between"><span>Сумма:</span><span className="font-bold">{formatPrice(totalPrice)}</span></div>
                 </div>
                 <Button className="w-full h-12 rounded-2xl border-2 border-black bg-white text-black hover:bg-gray-50" onClick={() => { setIsCartOpen(false); clearCart(); }}>Вернуться в меню</Button>
               </div>
@@ -1091,7 +1097,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
           <div className="p-6 pb-8 space-y-6">
             <div className="flex justify-between items-start">
               <h2 className="text-2xl font-bold">{selectedItem?.name}</h2>
-              <span className="text-xl font-black">{selectedItem?.price} ₽</span>
+              <span className="text-xl font-black">{selectedItem ? formatPrice(selectedItem.price) : ""}</span>
             </div>
 
             <p className="text-gray-600 leading-relaxed">{selectedItem?.description || "Нет описания"}</p>

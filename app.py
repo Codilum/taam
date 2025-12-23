@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 import smtplib
 from email.mime.text import MIMEText
 from random import randint
-from typing import List, Optional
+from typing import Any, List, Optional
 from datetime import datetime, timedelta
 import uvicorn
 import sqlite3
@@ -15,7 +15,7 @@ from pathlib import Path
 import qrcode
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import json
 import csv
 from io import StringIO
@@ -109,7 +109,7 @@ SUBSCRIPTION_PLANS_DATA = [
         "code": "trial",
         "name": "Пробная",
         "description": "Полный доступ на 3 дня.",
-        "price": 100,
+        "price": 0,
         "currency": "RUB",
         "duration_days": 3,
         "category_limit": None,
@@ -122,9 +122,48 @@ SUBSCRIPTION_PLANS_DATA = [
         "is_hidden": False,
     },
     {
+        "code": "qr-menu",
+        "name": "QR-Menu",
+        "description": "Тариф для работы в зале с QR-меню.",
+        "price": 199000,
+        "currency": "RUB",
+        "duration_days": 30,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": False,
+        "features": [
+            "Полный доступ без ограничений",
+            "Без ограничений по категориям",
+            "Без ограничений по блюдам",
+            "Поддержка приоритетного уровня",
+        ],
+        "is_hidden": False,
+    },
+    {
+        "code": "full",
+        "name": "Полный",
+        "description": "Максимальные возможности для доставки и зала.",
+        "price": 299000,
+        "currency": "RUB",
+        "duration_days": 30,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": False,
+        "features": [
+            "Полный доступ без ограничений",
+            "Без ограничений по категориям",
+            "Без ограничений по блюдам",
+            "Статистика и управление заказами",
+            "Поддержка приоритетного уровня",
+        ],
+        "is_hidden": False,
+    },
+    {
         "code": "premium",
         "name": "Премиум",
-        "description": "Полный доступ на месяц.",
+        "description": "Старый тариф (скрыт)",
         "price": 149000,
         "currency": "RUB",
         "duration_days": 30,
@@ -137,7 +176,7 @@ SUBSCRIPTION_PLANS_DATA = [
             "Без ограничений по блюдам",
             "Поддержка приоритетного уровня",
         ],
-        "is_hidden": False,
+        "is_hidden": True,
     },
     {
         "code": "testing",
@@ -1049,6 +1088,7 @@ class UpdateRestaurantRequest(BaseModel):
     phone: Optional[str] = None
     subdomain: Optional[str] = None
     currency: Optional[str] = None
+    delivery_settings: Optional[Any] = None
 
 
 class MenuCategory(BaseModel):
@@ -2119,6 +2159,12 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
     if req.currency is not None:
         updates.append("currency = ?")
         values.append(req.currency)
+    if req.delivery_settings is not None:
+        updates.append("delivery_settings = ?")
+        settings_value = req.delivery_settings
+        if isinstance(settings_value, (dict, list)):
+            settings_value = json.dumps(settings_value)
+        values.append(settings_value)
     if not updates:
         raise HTTPException(400, "Нет полей для обновления")
     values.append(restaurant_id)
@@ -2441,14 +2487,27 @@ def get_dashboard_stats(
         days = period_map.get(period.lower(), 30)
 
     days = max(days, 1)
-
-    start_date: datetime | None = None
+    now_value = datetime.now()
+    start_date: datetime
     if period != "all":
-        start_date = datetime.now() - timedelta(days=days - 1)
+        start_date = (now_value - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
         date_filter = " AND created_at >= ?"
         params.append(start_date.strftime("%Y-%m-%d %H:%M:%S"))
     else:
-        start_date = datetime.now() - timedelta(days=days - 1)
+        c.execute(
+            "SELECT MIN(date(created_at)) FROM orders WHERE restaurant_id = ?",
+            (restaurant_id,),
+        )
+        earliest = c.fetchone()
+        earliest_date_str = earliest[0] if earliest else None
+        if earliest_date_str:
+            try:
+                start_date = datetime.strptime(earliest_date_str, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
+            except ValueError:
+                start_date = now_value.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            start_date = now_value.replace(hour=0, minute=0, second=0, microsecond=0)
+        days = max((now_value.date() - start_date.date()).days + 1, 1)
     
     # 1. Basic metrics (total orders, revenue, avg check)
     c.execute(
@@ -2944,7 +3003,7 @@ def get_restaurant_by_subdomain(subdomain: str):
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute('''
-        SELECT id, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain
+        SELECT id, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain, currency, delivery_settings
         FROM restaurants WHERE subdomain = ?
     ''', (subdomain,))
     row = c.fetchone()
@@ -2970,7 +3029,9 @@ def get_restaurant_by_subdomain(subdomain: str):
         "features": features,
         "type": row[12],
         "phone": row[13],
-        "subdomain": row[14]
+        "subdomain": row[14],
+        "currency": row[15] or "RUB",
+        "delivery_settings": row[16],
     }
 
 @app.get("/api/menu/by-subdomain/{subdomain}")
@@ -3567,6 +3628,85 @@ async def import_menu_from_csv(
         "errors": errors,
         "categories": menu_data.get("categories", []),
     }
+
+
+@app.get("/api/restaurants/{restaurant_id}/menu/export-csv")
+def export_menu_to_csv(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Заведение не найдено")
+
+    c.execute(
+        """
+        SELECT mc.name, mc.description, mi.name, mi.price, mi.description, mi.calories, mi.proteins, mi.fats, mi.carbs, mi.weight, mi.photo, mi.view
+        FROM menu_categories mc
+        LEFT JOIN menu_items mi ON mi.category_id = mc.id
+        WHERE mc.restaurant_id = ?
+        ORDER BY mc.placenum ASC, mi.placenum ASC
+        """,
+        (restaurant_id,),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Category",
+        "Category Description",
+        "Name",
+        "Price",
+        "Description",
+        "Calories",
+        "Proteins",
+        "Fats",
+        "Carbs",
+        "Weight",
+        "Photo",
+        "Status",
+    ])
+
+    for (
+        category_name,
+        category_description,
+        item_name,
+        price,
+        description,
+        calories,
+        proteins,
+        fats,
+        carbs,
+        weight,
+        photo,
+        view,
+    ) in rows:
+        writer.writerow([
+            category_name or "",
+            category_description or "",
+            item_name or "",
+            price or 0,
+            description or "",
+            calories or "",
+            proteins or "",
+            fats or "",
+            carbs or "",
+            weight or "",
+            photo or "",
+            "visible" if view else "hidden",
+        ])
+
+    csv_content = output.getvalue()
+    filename = f"menu_export_{restaurant_id}_{datetime.now().strftime('%Y%m%d')}" + ".csv"
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 @app.patch("/api/restaurants/{restaurant_id}/menu-items/{item_id}")
 def update_menu_item(
