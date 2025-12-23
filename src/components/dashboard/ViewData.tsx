@@ -550,6 +550,18 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
 
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    const target = itemRefs.current[selectedItem.id];
+    if (target) {
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const offset = headerHeight + 24;
+      const top = window.scrollY + target.getBoundingClientRect().top - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  }, [selectedItem]);
+
   return (
     <div className="bg-gray-100 min-h-screen">
       <div className="bg-white rounded-b-[18px] md:bg-transparent md:rounded-none">
