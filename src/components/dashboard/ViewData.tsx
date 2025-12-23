@@ -460,6 +460,18 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     }
   };
 
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    const target = itemRefs.current[selectedItem.id];
+    if (target) {
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const offset = headerHeight + 24;
+      const top = window.scrollY + target.getBoundingClientRect().top - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  }, [selectedItem]);
+
   const isFirstItem = () => !data || (currentItemIndex === 0 && data.menu.findIndex(c => c.id === currentCategoryId) === 0);
   const isLastItem = () => !data || (currentCategoryId !== null && currentItemIndex === data.menu[data.menu.findIndex(c => c.id === currentCategoryId)].items.length - 1 && data.menu.findIndex(c => c.id === currentCategoryId) === data.menu.length - 1);
 
@@ -549,18 +561,6 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   }
 
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
-
-  useEffect(() => {
-    if (!selectedItem) return;
-
-    const target = itemRefs.current[selectedItem.id];
-    if (target) {
-      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
-      const offset = headerHeight + 24;
-      const top = window.scrollY + target.getBoundingClientRect().top - offset;
-      window.scrollTo({ top, behavior: "smooth" });
-    }
-  }, [selectedItem]);
 
   return (
     <div className="bg-gray-100 min-h-screen">
