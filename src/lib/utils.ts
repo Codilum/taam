@@ -11,3 +11,25 @@ export function formatCurrency(amount: number, currency: string = "RUB"): string
     maximumFractionDigits: 0,
   }).format(amount)
 }
+
+export function getCurrencySymbol(currency: string = "RUB"): string {
+  const symbols: Record<string, string> = {
+    RUB: "₽",
+    BYN: "Br",
+    KZT: "₸",
+    AZN: "₼",
+    UZS: "so'm",
+    GEL: "₾",
+    KGS: "сом",
+    AMD: "֏",
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    RSD: "дин.",
+    THB: "฿",
+    CNY: "¥",
+    KRW: "₩",
+    UAH: "₴",
+  }
+  return symbols[currency] || currency
+}
