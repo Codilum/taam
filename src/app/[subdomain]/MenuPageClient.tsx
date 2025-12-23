@@ -2,7 +2,7 @@
 "use client"
 
 import Image from "next/image"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -76,9 +76,10 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
   const [currentItemIndex, setCurrentItemIndex] = useState<number>(-1)
   const [activeCat, setActiveCat] = useState<number | null>(null)
 
-  const handleItemClick = (item: MenuItem, index: number) => {
+  const handleItemClick = (item: MenuItem, index: number, categoryId: number) => {
     setSelectedItem(item)
     setCurrentItemIndex(index)
+    setActiveCat(categoryId)
   }
 
   const handleAddToCart = (item: MenuItem) => {
@@ -149,6 +150,20 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
       ? currentCat.items[currentCat.items.length - 1].id === selectedItem.id &&
       data.menu.findIndex(c => c.id === currentCat.id) === data.menu.length - 1
       : true
+
+  useEffect(() => {
+    if (!selectedItem) return
+
+    const category = findCatByItem(selectedItem)
+    if (category) {
+      setActiveCat(category.id)
+    }
+
+    const target = document.getElementById(`menu-item-${selectedItem.id}`)
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+  }, [selectedItem])
 
   return (
     <div className="bg-gray-100 min-h-screen p-4 max-w-6xl mx-auto space-y-8">
@@ -251,8 +266,12 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
             <h3 className="text-2xl font-bold">{cat.name}</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {cat.items.map((item, idx) => (
-                <div key={item.id} className="cursor-pointer rounded-xl p-2 hover:bg-gray-100"
-                  onClick={() => handleItemClick(item, idx)}>
+                <div
+                  key={item.id}
+                  id={`menu-item-${item.id}`}
+                  className="cursor-pointer rounded-xl p-2 hover:bg-gray-100"
+                  onClick={() => handleItemClick(item, idx, cat.id)}
+                >
                   {item.photo ? (
                     <Image src={item.photo} alt={item.name} width={256} height={128} className="object-cover w-full h-32 rounded-xl mb-2" />
                   ) : (
