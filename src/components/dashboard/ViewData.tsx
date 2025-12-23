@@ -116,6 +116,12 @@ function formatHours(hours: string | null) {
   }
 }
 
+const hasNutritionValue = (value?: number | null) => {
+  if (value === null || value === undefined) return false;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
+};
+
 const ArrowLeftIcon = () => (
   <svg
     width="25"
@@ -462,6 +468,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const totalPrice = cartDetails.reduce((s, i) => s + i.price * i.quantity, 0);
   const cartCount = cartDetails.reduce((s, i) => s + i.quantity, 0);
   const uniqueItemCount = cartDetails.length;
+  const hasSelectedItemNutrition = selectedItem
+    ? [selectedItem.calories, selectedItem.proteins, selectedItem.fats, selectedItem.carbs].some(hasNutritionValue)
+    : false;
 
   const handleSubmitOrder = async () => {
     if (!data?.id) return;
@@ -823,12 +832,34 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
             <p className="text-gray-600 leading-relaxed">{selectedItem?.description || "Нет описания"}</p>
 
-            <div className="grid grid-cols-4 gap-2 text-center py-4 border-y border-dashed">
-              <div className="space-y-1"><p className="text-[10px] text-gray-400 font-bold uppercase">Ккал</p><p className="text-sm font-bold">{selectedItem?.calories || 0}</p></div>
-              <div className="space-y-1"><p className="text-[10px] text-gray-400 font-bold uppercase">Белки</p><p className="text-sm font-bold">{selectedItem?.proteins || 0}</p></div>
-              <div className="space-y-1"><p className="text-[10px] text-gray-400 font-bold uppercase">Жиры</p><p className="text-sm font-bold">{selectedItem?.fats || 0}</p></div>
-              <div className="space-y-1"><p className="text-[10px] text-gray-400 font-bold uppercase">Угл.</p><p className="text-sm font-bold">{selectedItem?.carbs || 0}</p></div>
-            </div>
+            {hasSelectedItemNutrition && (
+              <div className="grid grid-cols-4 gap-2 text-center py-4 border-y border-dashed">
+                {hasNutritionValue(selectedItem?.calories) && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">Ккал</p>
+                    <p className="text-sm font-bold">{selectedItem?.calories}</p>
+                  </div>
+                )}
+                {hasNutritionValue(selectedItem?.proteins) && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">Белки</p>
+                    <p className="text-sm font-bold">{selectedItem?.proteins}</p>
+                  </div>
+                )}
+                {hasNutritionValue(selectedItem?.fats) && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">Жиры</p>
+                    <p className="text-sm font-bold">{selectedItem?.fats}</p>
+                  </div>
+                )}
+                {hasNutritionValue(selectedItem?.carbs) && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-gray-400 font-bold uppercase">Угл.</p>
+                    <p className="text-sm font-bold">{selectedItem?.carbs}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-col gap-3">
               <div className="flex gap-2">
