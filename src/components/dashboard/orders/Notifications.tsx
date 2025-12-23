@@ -1,24 +1,15 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Volume2, VolumeX, Bell, Package, Truck, ChefHat, Clock, CheckCircle2, XCircle, Loader2, RefreshCw } from "lucide-react"
+import { Volume2, VolumeX, Bell, Package, ChefHat, CheckCircle2, XCircle, Loader2, RefreshCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { showErrorToast } from "@/lib/show-error-toast"
-import { orderService } from "@/services"
+import { orderService, Notification as OrderNotification } from "@/services"
 import { cn } from "@/lib/utils"
-
-interface Notification {
-    id: number
-    type: 'new_order' | 'status_change' | 'canceled'
-    order_number: string
-    message: string
-    created_at: string
-    read: boolean
-}
 
 const NOTIFICATION_ICONS: Record<string, React.ReactNode> = {
     new_order: <Package className="size-5 text-green-600" />,
@@ -42,73 +33,36 @@ function formatTime(dateStr: string): string {
 }
 
 export default function Notifications({ activeTeam }: { activeTeam: string }) {
-    const [notifications, setNotifications] = useState<Notification[]>([])
+    const [notifications, setNotifications] = useState<OrderNotification[]>([])
     const [loading, setLoading] = useState(false)
     const [soundEnabled, setSoundEnabled] = useState(false)
     const [autoRefresh, setAutoRefresh] = useState(false)
-    const [archived, setArchived] = useState<Notification[]>([])
-    const archivedRef = useRef<Notification[]>([])
+    const [archived, setArchived] = useState<OrderNotification[]>([])
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevCount = useRef<number>(0)
-
-    const storageKey = activeTeam ? `taam_archived_notifications_${activeTeam}` : null
 
     const loadNotifications = useCallback(async () => {
         if (!activeTeam) return
         setLoading(true)
         try {
             const data = await orderService.getNotifications(activeTeam)
-            const newNotifs = data.notifications || []
+            const newNotifs = (data.notifications || []) as OrderNotification[]
+            const unread = newNotifs.filter((n) => !n.read)
+            const archivedList = newNotifs.filter((n) => n.read)
 
-            // Play sound if new notifications
-            if (soundEnabled && newNotifs.length > prevCount.current && prevCount.current > 0) {
+            if (soundEnabled && unread.length > prevCount.current && prevCount.current > 0) {
                 audioRef.current?.play()
             }
-            prevCount.current = newNotifs.length
+            prevCount.current = unread.length
 
-            const archivedIds = new Set(archivedRef.current.map(n => n.id))
-            const incomingArchived = newNotifs.filter(n => archivedIds.has(n.id) || n.read)
-            const fresh = newNotifs.filter(n => !archivedIds.has(n.id) && !n.read)
-
-            setNotifications(fresh)
-            if (incomingArchived.length > 0) {
-                setArchived((prev) => {
-                    const merged = [...prev]
-                    incomingArchived.forEach((notif) => {
-                        if (!merged.some((n) => n.id === notif.id)) {
-                            merged.push({ ...notif, read: true })
-                        }
-                    })
-                    return merged
-                })
-            }
+            setNotifications(unread)
+            setArchived(archivedList)
         } catch (error: any) {
             showErrorToast(error.detail || "Не удалось загрузить уведомления")
         } finally {
             setLoading(false)
         }
     }, [activeTeam, soundEnabled])
-
-    useEffect(() => {
-        archivedRef.current = archived
-    }, [archived])
-
-    useEffect(() => {
-        if (!storageKey) return
-        try {
-            const cached = localStorage.getItem(storageKey)
-            if (cached) {
-                setArchived(JSON.parse(cached))
-            }
-        } catch (error) {
-            console.error("Не удалось загрузить архив уведомлений", error)
-        }
-    }, [storageKey])
-
-    useEffect(() => {
-        if (!storageKey) return
-        localStorage.setItem(storageKey, JSON.stringify(archived))
-    }, [archived, storageKey])
 
     useEffect(() => {
         loadNotifications()
@@ -123,18 +77,36 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
         setSoundEnabled(prev => !prev)
     }
 
-    const archiveNotification = (notif: Notification) => {
-        setNotifications((prev) => prev.filter((n) => n.id !== notif.id))
-        setArchived((prev) => prev.some((n) => n.id === notif.id) ? prev : [...prev, { ...notif, read: true }])
+    const archiveNotification = async (notif: OrderNotification) => {
+        try {
+            await orderService.markNotificationRead(activeTeam, notif.id)
+            setNotifications((prev) => prev.filter((n) => n.id !== notif.id))
+            setArchived((prev) => prev.some((n) => n.id === notif.id) ? prev : [...prev, { ...notif, read: true }])
+        } catch (error: any) {
+            showErrorToast(error.detail || "Не удалось обновить уведомление")
+        }
     }
 
-    const markAllAsRead = () => {
-        setArchived((prev) => {
-            const archivedIds = new Set(prev.map((n) => n.id))
-            const toArchive = notifications.filter((n) => !archivedIds.has(n.id)).map((n) => ({ ...n, read: true }))
-            return [...prev, ...toArchive]
-        })
-        setNotifications([])
+    const markAllAsRead = async () => {
+        if (notifications.length === 0) return
+        try {
+            const ids = notifications.map((n) => n.id)
+            await orderService.markAllNotificationsRead(activeTeam, ids)
+            const toArchive = notifications.map((n) => ({ ...n, read: true }))
+            setArchived((prev) => {
+                const existingIds = new Set(prev.map((n) => n.id))
+                const merged = [...prev]
+                toArchive.forEach((item) => {
+                    if (!existingIds.has(item.id)) {
+                        merged.push(item)
+                    }
+                })
+                return merged
+            })
+            setNotifications([])
+        } catch (error: any) {
+            showErrorToast(error.detail || "Не удалось отметить уведомления")
+        }
     }
 
     if (!activeTeam) {
