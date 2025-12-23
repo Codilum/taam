@@ -18,3 +18,5 @@ node_modules/
 .idea/
 *.log
 .next/
+
+users.db
