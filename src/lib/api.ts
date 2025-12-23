@@ -1,16 +1,81 @@
-export const API_URL = "http://localhost:8000"; // твой FastAPI бек
+export const API_URL = "http://localhost:8003/api";
 
-export async function apiPost(path: string, body: any) {
-  const res = await fetch(`${API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    credentials: "include", // важно если бек шлёт cookie
-  });
+export type ApiError = {
+  message?: string;
+  detail?: string | any[];
+  error?: string;
+};
 
-  if (!res.ok) {
-    throw new Error(await res.text());
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+
+  const headers: Record<string, string> = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...Object.fromEntries(
+      Object.entries(options.headers || {}).map(([k, v]) => [k, String(v)])
+    ),
+  };
+
+  if (!(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
   }
 
-  return res.json();
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorData: ApiError = {};
+    try {
+      errorData = await response.json();
+    } catch {
+      errorData = { message: await response.text() || response.statusText };
+    }
+    throw errorData;
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : ({} as T);
 }
+
+export const api = {
+  get: <T>(path: string, options?: RequestInit) =>
+    request<T>(path, { ...options, method: "GET" }),
+
+  post: <T>(path: string, body?: any, options?: RequestInit) =>
+    request<T>(path, {
+      ...options,
+      method: "POST",
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+
+  patch: <T>(path: string, body?: any, options?: RequestInit) =>
+    request<T>(path, {
+      ...options,
+      method: "PATCH",
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+
+  delete: <T>(path: string, options?: RequestInit) =>
+    request<T>(path, { ...options, method: "DELETE" }),
+
+  getBlob: async (path: string, options?: RequestInit): Promise<Blob> => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
+    const headers: Record<string, string> = {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...Object.fromEntries(Object.entries(options?.headers || {}).map(([k, v]) => [k, String(v)]))
+    };
+
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      method: "GET",
+      headers
+    });
+
+    if (!response.ok) {
+      throw await response.text();
+    }
+    return response.blob();
+  }
+};
