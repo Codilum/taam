@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Loader2, RefreshCcw, ShieldCheck, Users } from "lucide-react"
+import { adminService } from "@/services"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -115,40 +116,14 @@ export function AdminDashboard() {
   const [refreshing, setRefreshing] = useState(false)
 
   const loadOverview = useCallback(async () => {
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      setError("Нет доступа. Авторизуйтесь повторно")
-      setLoading(false)
-      return
-    }
     setRefreshing(true)
     try {
-      const res = await fetch("/api/admin/overview", {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      })
-      const raw = await res.text()
-      let payload: AdminOverview | null = null
-      if (raw) {
-        try {
-          payload = JSON.parse(raw) as AdminOverview
-        } catch (parseError) {
-          console.error(parseError)
-          setError("Не удалось распарсить ответ сервера")
-          return
-        }
-      }
-      if (!res.ok) {
-        const message =
-          (payload as any)?.detail || raw || "Недостаточно прав для доступа к админ-панели"
-        setError(message)
-        return
-      }
+      const payload: AdminOverview = await adminService.getOverview()
       setData(payload)
       setError(null)
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      setError("Не удалось загрузить данные админ-панели")
+      setError(err.detail || err.message || "Не удалось загрузить данные админ-панели")
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -398,13 +373,13 @@ export function AdminDashboard() {
                     <TableCell>
                       <Badge
                         variant=
-                          {sub.status === "active"
-                            ? "default"
-                            : sub.status === "pending"
+                        {sub.status === "active"
+                          ? "default"
+                          : sub.status === "pending"
                             ? "outline"
                             : sub.status === "canceled"
-                            ? "destructive"
-                            : "secondary"}
+                              ? "destructive"
+                              : "secondary"}
                       >
                         {sub.status}
                       </Badge>
@@ -413,8 +388,8 @@ export function AdminDashboard() {
                       {sub.amount > 0
                         ? formatCurrency(sub.amount, sub.currency)
                         : sub.is_trial
-                        ? "Пробная"
-                        : "0"}
+                          ? "Пробная"
+                          : "0"}
                     </TableCell>
                     <TableCell>{formatDate(sub.created_at)}</TableCell>
                     <TableCell>{formatDate(sub.started_at)}</TableCell>

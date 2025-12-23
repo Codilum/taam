@@ -16,6 +16,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { restaurantService } from "@/services"
 
 type Restaurant = {
   id: string
@@ -35,13 +36,7 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
 
   const fetchRestaurants = React.useCallback(async () => {
     try {
-      const res = await fetch("/api/restaurants", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      })
-      if (!res.ok) throw new Error("Failed to fetch restaurant data")
-      const data = await res.json()
+      const data = await restaurantService.getRestaurants()
       const formatted = data.map((r: any) => ({
         id: r.id.toString(),
         name: r.name,
@@ -52,7 +47,7 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
       if (formatted.length > 0 && !activeTeam) {
         setActiveTeam(formatted[0].id)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
     }
   }, [activeTeam, setActiveTeam])
@@ -83,16 +78,10 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
   // Создание нового заведения
   const handleAddRestaurant = async () => {
     try {
-      const res = await fetch("/api/restaurants", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-        body: JSON.stringify({ name: "Новое заведение", description: "Описание..." }),
+      const newRestaurant = await restaurantService.createRestaurant({
+        name: "Новое заведение",
+        description: "Описание...",
       })
-      if (!res.ok) throw new Error("Не удалось создать заведение")
-      const newRestaurant = await res.json()
       const restaurant: Restaurant = {
         id: newRestaurant.id.toString(),
         name: newRestaurant.name,
@@ -101,7 +90,7 @@ export function TeamSwitcher({ activeTeam, setActiveTeam }: TeamSwitcherProps) {
       }
       setTeams((prev) => [...prev, restaurant])
       setActiveTeam(restaurant.id)
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
     }
   }

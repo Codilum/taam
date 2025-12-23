@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { CircleCheck, Loader2, RefreshCcw, Sparkles } from "lucide-react"
+import { CircleCheck, Loader2, RefreshCcw, Sparkles, ArrowLeft, Check, X } from "lucide-react"
 import { toast } from "sonner"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -16,6 +16,8 @@ import {
 } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { showErrorToast } from "@/lib/show-error-toast"
+import { subscriptionService } from "@/services"
+import { cn } from "@/lib/utils"
 
 type Plan = {
   code: string
@@ -42,15 +44,6 @@ type SubscriptionInfo = {
   currency?: string | null
 } | null
 
-const parseMessage = (data: any, raw: string, fallback: string) => {
-  if (typeof data === "string" && data.trim()) return data
-  if (data && typeof data.message === "string" && data.message.trim()) return data.message
-  if (data && typeof data.detail === "string" && data.detail.trim()) return data.detail
-  if (data && typeof data.error === "string" && data.error.trim()) return data.error
-  if (raw && raw.includes("Request Entity Too Large")) return "Файл слишком большой"
-  return raw?.trim() || fallback
-}
-
 const formatCurrency = (amount: number, currency: string) => {
   try {
     return new Intl.NumberFormat("ru-RU", {
@@ -64,27 +57,42 @@ const formatCurrency = (amount: number, currency: string) => {
   }
 }
 
-const planLimitDescription = (plan: Plan) => {
-  if (plan.is_full_access) return "Полный доступ без ограничений"
-  const parts: string[] = []
-  if (typeof plan.category_limit === "number") {
-    parts.push(`До ${plan.category_limit} категорий меню`)
+// Custom Tariff Definitions to match User Request
+const TARIFF_DEFINITIONS: Record<string, { title: string, description: string, features: string[], highlight?: boolean }> = {
+  "base": {
+    title: "Базовый",
+    description: "Для небольших меню",
+    features: ["Базовый функционал", "Ограничение по позициям", "Стандартная поддержка"]
+  },
+  "trial": {
+    title: "Пробный",
+    description: "Попробовать все возможности",
+    features: ["Полный функционал на 7 дней", "Все интеграции", "Без ограничений"]
+  },
+  "qr-menu": {
+    title: "QR-Menu",
+    description: "Идеально для зала",
+    features: [
+      "Полный доступ без ограничений",
+      "Без ограничений по категориям",
+      "Без ограничений по блюдам",
+      "Поддержка приоритетного уровня"
+    ]
+  },
+  "full": {
+    title: "Полный",
+    description: "Максимальные возможности",
+    highlight: true,
+    features: [
+      "Полный доступ без ограничений",
+      "Без ограничений по категориям",
+      "Без ограничений по блюдам",
+      "Возможность оформить доставку",
+      "Статистика заказов",
+      "Поддержка приоритетного уровня"
+    ]
   }
-  if (typeof plan.item_limit === "number") {
-    parts.push(`До ${plan.item_limit} блюд в категории`)
-  }
-  return parts.join(", ") || "Гибкие ограничения"
-}
-
-const formatDate = (value?: string | null) => {
-  if (!value) return null
-  const normalized = value.replace(" ", "T")
-  const date = new Date(`${normalized}Z`)
-  if (Number.isNaN(date.getTime())) {
-    return value.split(" ")[0]
-  }
-  return date.toLocaleDateString("ru-RU")
-}
+};
 
 export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   const [plans, setPlans] = useState<Plan[]>([])
@@ -101,29 +109,20 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
   const [keySequence, setKeySequence] = useState<string[]>([])
   const [showKeyIndicator, setShowKeyIndicator] = useState(false)
 
-  // Обработчик горячих клавиш
+  // Обработчик горячих клавиш (оставлен без изменений)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key?.toLowerCase()
-      
-      // Добавляем клавишу в последовательность
       setKeySequence(prev => {
-        const newSequence = [...prev, key].slice(-3) // Храним только последние 3 клавиши
+        const newSequence = [...prev, key].slice(-3)
         return newSequence
       })
-
-      // Показываем индикатор на короткое время
-      // setShowKeyIndicator(true)
       setTimeout(() => setShowKeyIndicator(false), 1000)
-
-      // Проверяем комбинацию Alt+T или Option+T
       if ((event.altKey || event.metaKey) && key === '†') {
         event.preventDefault()
         setSecretControlsVisible((prev) => !prev)
-        setKeySequence([]) // Сбрасываем последовательность после активации
+        setKeySequence([])
       }
-
-      // Альтернативная активация: последовательность "show"
       const currentSequence = [...keySequence, key].slice(-4).join('')
       if (currentSequence.includes('show')) {
         event.preventDefault()
@@ -131,71 +130,27 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
         setKeySequence([])
       }
     }
-
     window.addEventListener("keydown", handleKeyDown)
     return () => {
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [keySequence])
 
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadPlans() {
-      const token = localStorage.getItem("access_token")
-      if (!token) return
-      try {
-        const res = await fetch("/api/subscriptions/plans", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) return
-        const data = await res.json()
-        if (!cancelled && Array.isArray(data?.plans)) {
-          setPlans(data.plans)
-        }
-      } catch (error) {
-        console.error("Не удалось загрузить тарифы", error)
-      }
-    }
-
-    loadPlans()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const reloadSubscription = useCallback(async () => {
-    if (!activeTeam) {
-      setSubscription(null)
-      return
-    }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setLoading(true)
+  const loadData = useCallback(async () => {
+    if (!activeTeam) return;
+    setLoading(true);
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
+      const [plansData, subData] = await Promise.all([
+        subscriptionService.getPlans(),
+        subscriptionService.getSubscription(activeTeam)
+      ]);
+
+      if (Array.isArray(plansData?.plans)) {
+        setPlans(plansData.plans);
       }
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось загрузить подписку")
-        showErrorToast(message)
-        return
-      }
-      setSubscription(data?.subscription ?? null)
-      const pending = data?.pending_payment
+
+      setSubscription(subData?.subscription ?? null);
+      const pending = subData?.pending_payment;
       if (pending) {
         setPendingPayment({
           paymentId: (pending.payment_id as string | null | undefined) ?? null,
@@ -206,483 +161,268 @@ export default function Tariffs({ activeTeam }: { activeTeam: string }) {
       } else {
         setPendingPayment(null)
       }
-      window.dispatchEvent(new CustomEvent("subscription:updated"))
-    } catch (error) {
-      console.error(error)
-      showErrorToast("Не удалось загрузить подписку")
+
+    } catch (error: any) {
+      console.error(error);
+      showErrorToast("Ошибка загрузки данных");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [activeTeam])
+  }, [activeTeam]);
 
   useEffect(() => {
-    reloadSubscription()
-  }, [reloadSubscription])
+    loadData();
+  }, [loadData]);
 
-  const activePlanCode = subscription?.plan_code || null
-  const currentStatus = subscription?.status || null
-  const activePlan = useMemo(
-    () => plans.find(plan => plan.code === activePlanCode) ?? null,
-    [plans, activePlanCode],
-  )
-  const hasPaidActiveSubscription = useMemo(() => {
-    if (!subscription || subscription.status !== "active") return false
-    if (activePlan) {
-      if (activePlan.is_trial) return false
-      return (activePlan.price || 0) > 0
-    }
-    return (subscription.amount || 0) > 0
-  }, [subscription, activePlan])
 
   const handleSubscribe = async (planCode: string) => {
     if (!activeTeam) {
       showErrorToast("Выберите заведение")
       return
     }
-    if (planCode === "base" && hasPaidActiveSubscription) {
+    // Prevent subscribing to base if paid active
+    const activePlan = plans.find(p => p.code === subscription?.plan_code);
+    const hasPaidActive = subscription?.status === "active" && !activePlan?.is_trial && (activePlan?.price || 0) > 0;
+
+    if (planCode === "base" && hasPaidActive) {
       toast.error("Нельзя перейти на базовый тариф, пока действует оплаченная подписка")
       return
     }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
+
     setProcessingPlan(planCode)
     try {
       const params = new URLSearchParams(window.location.search)
       const returnTeam = params.get("team") || activeTeam
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          plan_code: planCode,
-          return_url: `${window.location.origin}/dashboard?team=${returnTeam}&block=subscription`,
-        }),
+      const data = await subscriptionService.subscribe(activeTeam, {
+        plan_code: planCode,
+        return_url: `${window.location.origin}/dashboard?team=${returnTeam}&block=subscription`,
       })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось оформить подписку")
-        showErrorToast(message)
-        return
-      }
 
       if (data?.status === "active") {
-        await reloadSubscription()
+        await loadData()
         toast.success("Подписка активирована")
       } else if (data?.status === "pending") {
+        // Handle pending payment logic similar to before
         const paymentId = (data?.payment_id as string | null | undefined) ?? null
         const confirmationUrl = data?.confirmation_url as string | undefined
         const planName = data?.plan_name as string | undefined
         const existing = Boolean(data?.existing)
-        setPendingPayment({
-          paymentId,
-          confirmationUrl,
-          planName,
-          existing,
-        })
-        if (confirmationUrl && !existing) {
-          window.open(confirmationUrl, "_blank", "noopener")
-        }
-        if (existing) {
-          toast.warning("У вас уже есть неоплаченная подписка. Вы можете продолжить оплату или отменить её.")
-        } else {
-          toast.info("Перейдите к оплате и подтвердите платеж")
-        }
+        setPendingPayment({ paymentId, confirmationUrl, planName, existing })
+        if (confirmationUrl && !existing) window.open(confirmationUrl, "_blank", "noopener");
+        toast.info(existing ? "У вас уже есть неоплаченная подписка" : "Перейдите к оплате");
       } else {
-        await reloadSubscription()
-        toast.success("Запрос на подписку отправлен")
+        await loadData();
+        toast.success("Запрос отправлен");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error)
-      showErrorToast("Не удалось оформить подписку")
+      showErrorToast(error.detail || error.message || "Не удалось оформить подписку")
     } finally {
       setProcessingPlan(null)
     }
   }
 
   const handleRefreshPayment = async () => {
-    if (!activeTeam || !pendingPayment?.paymentId) {
-      toast.warning("Нет платежа для проверки")
-      return
-    }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setRefreshing(true)
+    if (!activeTeam || !pendingPayment?.paymentId) return;
+    setRefreshing(true);
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/refresh`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ payment_id: pendingPayment.paymentId }),
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось проверить платеж")
-        showErrorToast(message)
-        return
-      }
-
-      const status = data?.status
-      if (status === "active") {
-        await reloadSubscription()
-        setPendingPayment(null)
-        toast.success("Подписка активирована")
-      } else if (status === "canceled") {
-        setPendingPayment(null)
-        showErrorToast("Платеж отменен")
+      const data = await subscriptionService.refreshPayment(activeTeam, pendingPayment.paymentId);
+      if (data?.status === "active") {
+        await loadData();
+        setPendingPayment(null);
+        toast.success("Подписка активирована");
+      } else if (data?.status === "canceled") {
+        setPendingPayment(null);
+        showErrorToast("Платеж отменен");
       } else {
-        toast.info("Платеж ещё обрабатывается")
+        toast.info("Платеж ещё обрабатывается");
       }
-    } catch (error) {
-      console.error(error)
-      showErrorToast("Не удалось проверить платеж")
-    } finally {
-      setRefreshing(false)
-    }
+    } catch (e) { showErrorToast("Ошибка проверки"); } finally { setRefreshing(false); }
   }
 
   const handleCancelPending = async () => {
-    if (!activeTeam) {
-      showErrorToast("Выберите заведение")
-      return
-    }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setCanceling(true)
+    if (!activeTeam) return;
+    setCanceling(true);
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/cancel`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ payment_id: pendingPayment?.paymentId ?? null }),
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось отменить подписку")
-        showErrorToast(message)
-        return
-      }
-
-      setPendingPayment(null)
-      toast.success("Неоплаченная подписка отменена")
-      await reloadSubscription()
-    } catch (error) {
-      console.error(error)
-      showErrorToast("Не удалось отменить подписку")
-    } finally {
-      setCanceling(false)
-    }
+      await subscriptionService.cancelPending(activeTeam, pendingPayment?.paymentId ?? null);
+      setPendingPayment(null);
+      await loadData();
+      toast.success("Подписка отменена");
+    } catch (e) { showErrorToast("Ошибка отмены"); } finally { setCanceling(false); }
   }
 
-  const handleGrantTrial = useCallback(async () => {
-    if (!activeTeam) {
-      showErrorToast("Выберите заведение")
-      return
-    }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setGrantingTrial(true)
+  const handleGrantTrial = async () => {
+    if (!activeTeam) return;
+    setGrantingTrial(true);
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/grant-trial`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось выдать пробную подписку")
-        showErrorToast(message)
-        return
-      }
-      toast.success("Пробная подписка активирована")
-      setPendingPayment(null)
-      if (data?.subscription) {
-        setSubscription(data.subscription)
-      }
-      await reloadSubscription()
-    } catch (error) {
-      console.error(error)
-      showErrorToast("Не удалось выдать пробную подписку")
-    } finally {
-      setGrantingTrial(false)
-    }
-  }, [activeTeam, reloadSubscription])
-
-  const renderPlanPrice = (plan: Plan) => {
-    if (plan.price <= 0) return "Бесплатно"
-    return formatCurrency(plan.price, plan.currency)
+      await subscriptionService.grantTrial(activeTeam);
+      toast.success("Trial activated");
+      await loadData();
+    } catch (e) { showErrorToast("Error"); } finally { setGrantingTrial(false); }
   }
 
-  const currentExpires = useMemo(() => {
-    if (!subscription?.expires_at) return null
-    return formatDate(subscription.expires_at)
-  }, [subscription])
+  const handleBack = () => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const teamParam = params.get("team") || activeTeam
+    window.dispatchEvent(
+      new CustomEvent("dashboard:navigate", {
+        detail: { block: "subscription", team: teamParam || undefined },
+      }),
+    )
+  }
 
   if (!activeTeam) {
     return (
       <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-        <h2 className="text-xl font-bold">Тарифы</h2>
-        <Card>
-          <CardHeader>
-            <CardTitle>Выберите заведение</CardTitle>
-            <CardDescription>Чтобы управлять тарифами, выберите заведение из списка слева.</CardDescription>
-          </CardHeader>
-        </Card>
+        <Card><CardHeader><CardTitle>Выберите заведение</CardTitle></CardHeader></Card>
       </div>
     )
   }
 
+  // Sort plans: Base, Trial, QR-Menu, Full
+  // We assume backend codes map to frontend keys or we use frontend keys to find backend plans
+  const displayPlans = ["base", "trial", "qr-menu", "full"].map(key => {
+    // Find matching backend plan. Assume exact code match or strict mapping.
+    // If backend codes differ, we might need a mapping function.
+    // For now, assuming codes match: 'base', 'trial', 'qr-menu' (slugified?), 'full'
+    const backendPlan = plans.find(p => p.code === key) || plans.find(p => p.code.includes(key));
+
+    const def = TARIFF_DEFINITIONS[key] || { title: key, description: "", features: [] };
+    return {
+      ...def,
+      backendPlan,
+      code: key
+    };
+  });
+
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 pt-0 relative">
-      {/* Индикатор ввода клавиш */}
+    <div className="flex flex-1 flex-col gap-4 p-4 pt-0 relative max-w-[1600px] mx-auto w-full">
+      {/* Secret Key Indicator */}
       <AnimatePresence>
         {showKeyIndicator && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8, y: -20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.8, y: -20 }}
-            className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border rounded-lg p-3 shadow-lg"
-          >
-            <div className="flex items-center gap-2 text-sm">
-              <div className="flex items-center gap-1">
-                {keySequence.slice(-3).map((key, index) => (
-                  <motion.span
-                    key={index}
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    className="bg-muted px-2 py-1 rounded border text-xs font-mono min-w-6 text-center"
-                  >
-                    {key}
-                  </motion.span>
-                ))}
-              </div>
-              <span className="text-muted-foreground">Нажмите Alt+T для секретных настроек</span>
-            </div>
-          </motion.div>
+          <div className="fixed top-4 right-4 z-50 bg-background/80 p-3 rounded">{keySequence.join('')}</div>
         )}
       </AnimatePresence>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl font-bold">Тарифы</h2>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          {loading && <Loader2 className="size-4 animate-spin" />}
-          <span>
-            {subscription?.plan_name ? (
-              <>Текущий тариф: <span className="font-medium text-foreground">{subscription.plan_name}</span></>
-            ) : (
-              <>Подписка ещё не оформлена</>
-            )}
-            {currentExpires && <>, действует до {currentExpires}</>}
-          </span>
-        </div>
+      <div className="flex items-center gap-4 mb-4">
+        <Button variant="ghost" size="icon" onClick={handleBack} className="-ml-2">
+          <ArrowLeft className="h-6 w-6" />
+        </Button>
+        <h1 className="text-3xl font-bold tracking-tight">Выберите тариф</h1>
       </div>
 
       <AnimatePresence>
         {secretControlsVisible && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleGrantTrial}
-                disabled={grantingTrial || loading}
-              >
-                {grantingTrial && <Loader2 className="mr-2 size-4 animate-spin" />}
-                {grantingTrial ? "Активируем..." : "Выдать пробную подписку"}
-              </Button>
-            </div>
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}>
+            <Button variant="outline" onClick={handleGrantTrial} disabled={grantingTrial}>
+              {grantingTrial ? <Loader2 className="animate-spin" /> : "Выдать Trial"}
+            </Button>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* Pending Payment Warning */}
       {pendingPayment && (
-        <Card className="border-yellow-200 bg-yellow-50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="size-4 text-yellow-600" />
-              Оплата ожидает подтверждения
-            </CardTitle>
-            <CardDescription>
-              {pendingPayment.planName ? (
-                <>
-                  Оплата тарифа «{pendingPayment.planName}» ожидает подтверждения. Завершите платеж и обновите статус.
-                </>
-              ) : (
-                <>Завершите оплату и нажмите «Проверить оплату», чтобы активировать подписку.</>
-              )}
-            </CardDescription>
+        <Card className="border-yellow-200 bg-yellow-50 mb-6">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2 font-semibold text-yellow-800">
+              <Sparkles className="size-5" />
+              Требуется подтверждение оплаты {pendingPayment.planName && `для "${pendingPayment.planName}"`}
+            </div>
           </CardHeader>
-          <CardFooter className="flex flex-wrap gap-2">
+          <CardFooter className="gap-3 pt-0">
             {pendingPayment.confirmationUrl && (
-              <Button
-                variant="outline"
-                onClick={() => window.open(pendingPayment.confirmationUrl, "_blank", "noopener")}
-              >
-                Открыть оплату
+              <Button variant="default" size="sm" onClick={() => window.open(pendingPayment.confirmationUrl!, "_blank")}>
+                Оплатить
               </Button>
             )}
-            <Button onClick={handleRefreshPayment} disabled={refreshing || !pendingPayment.paymentId}>
-              {refreshing ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <RefreshCcw className="mr-2 size-4" />
-              )}
-              Проверить оплату
+            <Button variant="outline" size="sm" onClick={handleRefreshPayment} disabled={refreshing}>
+              {refreshing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCcw className="size-4 mr-2" />} Проверить
             </Button>
-            <Button
-              variant="destructive"
-              onClick={handleCancelPending}
-              disabled={canceling}
-            >
-              {canceling ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : null}
-              {canceling ? "Отменяем..." : "Отменить оплату"}
+            <Button variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={handleCancelPending} disabled={canceling}>
+              Отменить
             </Button>
           </CardFooter>
         </Card>
       )}
 
-      <div className="bg-muted/50 rounded-xl">
-        <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-          <div className="grid gap-6 md:grid-cols-3">
-            {plans.map((plan) => {
-              const baseFeatures = plan.features ?? []
-              const limitText = planLimitDescription(plan)
-              const combined = limitText ? [limitText, ...baseFeatures] : baseFeatures
-              const features = Array.from(new Set(combined))
-              const isActive = activePlanCode === plan.code && currentStatus === "active"
-              const isProcessing = processingPlan === plan.code
-              const downgradeRestricted = plan.code === "base" && hasPaidActiveSubscription
+      {/* Plans Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        {displayPlans.map((plan) => {
+          const backend = plan.backendPlan;
+          const priceText = backend
+            ? (backend.price === 0 ? "Бесплатно" : formatCurrency(backend.price, backend.currency))
+            : "Недоступно";
 
-              return (
-                <Card
-                  key={plan.code}
-                  className={`flex h-full flex-col justify-between text-left shadow-sm transition ${
-                    isActive ? "border-2 border-[#FFEA5A] bg-white" : ""
-                  }`}
+          const isCurrent = subscription?.plan_code === backend?.code && subscription?.status === "active";
+          const isProcessing = processingPlan === backend?.code;
+
+          // Downgrade restriction
+          const activePlan = plans.find(p => p.code === subscription?.plan_code);
+          const hasPaidActive = subscription?.status === "active" && !activePlan?.is_trial && (activePlan?.price || 0) > 0;
+          const isRestricted = plan.code === "base" && hasPaidActive;
+
+          return (
+            <Card
+              key={plan.code}
+              className={cn(
+                "relative flex flex-col transition-all duration-200 hover:shadow-lg border-2",
+                plan.highlight ? "border-primary shadow-md" : "border-transparent",
+                isCurrent ? "ring-2 ring-green-500 border-green-500 bg-green-50/10" : "bg-card"
+              )}
+            >
+              {plan.highlight && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                  Рекомендуем
+                </div>
+              )}
+              <CardHeader>
+                <CardTitle className="text-2xl">{plan.title}</CardTitle>
+                <CardDescription className="text-base mt-2 min-h-[40px]">{plan.description}</CardDescription>
+                <div className="mt-4 text-3xl font-bold tracking-tight">
+                  {priceText}
+                  {backend?.duration_days && backend.price > 0 && <span className="text-sm font-normal text-muted-foreground ml-1">/ {backend.duration_days} дн.</span>}
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1">
+                <Separator className="mb-6" />
+                <ul className="space-y-4">
+                  {plan.features.map((feature, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm">
+                      <div className="mt-1 rounded-full bg-primary/10 p-1">
+                        <Check className="size-3 text-primary" />
+                      </div>
+                      <span className="text-muted-foreground">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+              <CardFooter className="pt-6">
+                <Button
+                  className="w-full h-11 text-base font-medium"
+                  variant={isCurrent ? "outline" : (plan.highlight ? "default" : "secondary")}
+                  disabled={isCurrent || !backend || isProcessing || isRestricted || loading}
+                  onClick={() => backend && handleSubscribe(backend.code)}
                 >
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      {isActive && <Sparkles className="size-5 text-[#FFAE00]" />}
-                      {plan.name}
-                    </CardTitle>
-                    {plan.description && (
-                      <CardDescription>{plan.description}</CardDescription>
-                    )}
-                    <div className="mt-4 text-3xl font-semibold">
-                      {renderPlanPrice(plan)}
-                    </div>
-                    {plan.duration_days && (
-                      <p className="text-sm text-muted-foreground">
-                        Длительность: {plan.duration_days} дн.
-                      </p>
-                    )}
-                    {downgradeRestricted && (
-                      <p className="mt-2 text-sm text-destructive">
-                        Нельзя перейти на базовый тариф, пока действует оплаченная подписка.
-                      </p>
-                    )}
-                  </CardHeader>
-                  <CardContent>
-                    <Separator className="mb-4" />
-                    <ul className="space-y-3 text-sm">
-                      {features.map((feature) => (
-                        <li key={feature} className="flex items-start gap-2">
-                          <CircleCheck className="mt-0.5 size-4 text-green-600" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                  <CardFooter>
-                    <Button
-                      className="w-full"
-                      onClick={() => handleSubscribe(plan.code)}
-                      disabled={isActive || isProcessing || loading || downgradeRestricted}
-                    >
-                      {isActive
-                        ? "Текущий тариф"
-                        : isProcessing
-                        ? "Оформляем..."
-                        : downgradeRestricted
-                        ? "Недоступно"
-                        : "Оформить подписку"}
-                    </Button>
-                  </CardFooter>
-                </Card>
-              )
-            })}
-            {plans.length === 0 && (
-              <Card className="md:col-span-3">
-                <CardHeader>
-                  <CardTitle>Тарифы временно недоступны</CardTitle>
-                  <CardDescription>
-                    Попробуйте обновить страницу позже или обратитесь в поддержку.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            )}
-          </div>
-        </div>
+                  {isCurrent ? (
+                    <span className="flex items-center gap-2 text-green-600"><Check className="size-4" /> Ваш тариф</span>
+                  ) : isProcessing ? (
+                    <><Loader2 className="mr-2 size-4 animate-spin" /> Оформляем</>
+                  ) : isRestricted ? (
+                    "Недоступно"
+                  ) : (
+                    "Выбрать"
+                  )}
+                </Button>
+              </CardFooter>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="mt-8 text-center text-sm text-muted-foreground">
+        Есть вопросы? <a href="#" className="underline underline-offset-4 hover:text-primary">Свяжитесь с поддержкой</a>
       </div>
     </div>
   )

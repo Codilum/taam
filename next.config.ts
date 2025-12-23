@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: 'http',
-        hostname: '0.0.0.0',
+        hostname: 'localhost',
         port: '8003',
         pathname: '/**',
       },
@@ -25,11 +25,7 @@ const nextConfig: NextConfig = {
       'http://localhost:3000',
       `https://${LOCALTUNNEL_SUBDOMAIN}.loca.lt`,
     ],
-  } as any, // TypeScript "не парься"
-
-  devIndicators: {
-    buildActivity: false, // убирает зелёный индикатор Next.js в dev
-  },
+  } as any, // <--- здесь говорим TypeScript "не парься"
 }
 
 module.exports = nextConfig;

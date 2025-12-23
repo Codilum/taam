@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://taam.menu/</loc>
+  </url>
+  <url>
+    <loc>https://taam.menu/#catalog</loc>
+  </url>
+  <url>
+    <loc>https://taam.menu/#tariffs</loc>
+  </url>
+  <url>
+    <loc>https://taam.menu/#contacts</loc>
+  </url>
+  <url>
+    <loc>https://taam.menu/#how-it-works</loc>
+  </url>
+  <url>
+    <loc>https://taam.menu/docs/policy.pdf</loc>
+  </url>
+  <!-- Примеры внутренних страниц заведений -->
+  <url>
+    <loc>https://mona.taam.menu/</loc>
+  </url>
+  <url>
+    <loc>https://sad.taam.menu/</loc>
+  </url>
+</urlset>

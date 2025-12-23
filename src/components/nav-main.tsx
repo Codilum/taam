@@ -27,10 +27,7 @@ export function NavMain({
     url: string
     icon?: LucideIcon
     isActive?: boolean
-    items?: {
-      title: string
-      url: string
-    }[]
+    items?: any[]
   }[]
   setActiveBlock: (block: string) => void
 }) {
@@ -41,17 +38,42 @@ export function NavMain({
     setOpenMobile(false);
   };
 
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Главная</SidebarGroupLabel>
-      <SidebarMenu>
-        {items.map((item) => (
-          <Collapsible
-            key={item.title}
-            asChild
-            defaultOpen={item.isActive}
-            className="group/collapsible"
-          >
+  const renderMenuItems = (menuItems: any[], level: number = 1) => {
+    return menuItems.map((item) => {
+      const hasChildren = item.items && item.items.length > 0;
+
+      if (!hasChildren) {
+        if (level === 1) {
+          return (
+            <SidebarMenuItem key={item.title}>
+              <SidebarMenuButton tooltip={item.title} onClick={() => handleItemClick(item.url)} data-active={item.isActive}>
+                {item.icon && <item.icon />}
+                <span>{item.title}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          );
+        }
+
+        return (
+          <SidebarMenuSubItem key={item.title}>
+            <SidebarMenuSubButton asChild isActive={item.isActive}>
+              <button onClick={() => handleItemClick(item.url)}>
+                {item.icon && <item.icon />}
+                <span>{item.title}</span>
+              </button>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        );
+      }
+
+      const Content = (
+        <Collapsible
+          key={item.title}
+          asChild
+          defaultOpen={item.isActive}
+          className="group/collapsible"
+        >
+          {level === 1 ? (
             <SidebarMenuItem>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton tooltip={item.title}>
@@ -62,20 +84,38 @@ export function NavMain({
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <SidebarMenuSub>
-                  {item.items?.map((subItem) => (
-                    <SidebarMenuSubItem key={subItem.title}>
-                      <SidebarMenuSubButton asChild>
-                        <button onClick={() => handleItemClick(subItem.url)}>
-                          <span>{subItem.title}</span>
-                        </button>
-                      </SidebarMenuSubButton>
-                    </SidebarMenuSubItem>
-                  ))}
+                  {renderMenuItems(item.items, level + 1)}
                 </SidebarMenuSub>
               </CollapsibleContent>
             </SidebarMenuItem>
-          </Collapsible>
-        ))}
+          ) : (
+            <SidebarMenuSubItem>
+              <CollapsibleTrigger asChild>
+                <SidebarMenuSubButton>
+                  {item.icon && <item.icon />}
+                  <span>{item.title}</span>
+                  <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                </SidebarMenuSubButton>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <SidebarMenuSub className="ml-4 border-l">
+                  {renderMenuItems(item.items, level + 1)}
+                </SidebarMenuSub>
+              </CollapsibleContent>
+            </SidebarMenuSubItem>
+          )}
+        </Collapsible>
+      );
+
+      return Content;
+    });
+  };
+
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Панель управления</SidebarGroupLabel>
+      <SidebarMenu>
+        {renderMenuItems(items)}
       </SidebarMenu>
     </SidebarGroup>
   )

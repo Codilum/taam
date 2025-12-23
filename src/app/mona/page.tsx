@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import ViewData from "@/components/dashboard/ViewData"
 import { useRouter } from "next/navigation"
 import { Skeleton } from "@/components/ui/skeleton"
+import { restaurantService } from "@/services"
 
 interface Restaurant {
   id: number
@@ -35,13 +36,13 @@ export default function SubdomainPage() {
     // Получаем subdomain из URL
     const hostname = window.location.hostname
     const currentSubdomain = hostname.split('.')[0]
-    
+
     if (currentSubdomain === 'taam' || currentSubdomain === 'www') {
       setError(true)
       setLoading(false)
       return
     }
-    
+
     setSubdomain(currentSubdomain)
   }, [])
 
@@ -50,9 +51,7 @@ export default function SubdomainPage() {
 
     const fetchRestaurant = async () => {
       try {
-        const res = await fetch(`/api/restaurants/by-subdomain/${subdomain}`)
-        if (!res.ok) throw new Error("not found")
-        const data: Restaurant = await res.json()
+        const data: Restaurant = await restaurantService.getBySubdomain(subdomain)
         setRestaurantId(data.id)
       } catch (e) {
         setError(true)

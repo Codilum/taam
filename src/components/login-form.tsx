@@ -16,10 +16,17 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { LogIn, Loader2 } from "lucide-react"
 import { PasswordInput } from "@/components/password-input"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldSeparator,
+} from "@/components/ui/field"
+import { authService } from "@/services"
 
 type Mode = "login" | "register" | "forgot" | "reset"
 
-const API_URL = "/api"
 
 export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const router = useRouter()
@@ -77,20 +84,10 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
     } else setCanResendForgot(true)
   }, [countdownForgot])
 
-  const parseError = async (res: Response) => {
-    try {
-      const data = await res.json()
-      if (data?.detail) return data.detail
-      return JSON.stringify(data)
-    } catch {
-      return await res.text()
-    }
-  }
 
   const sendCode = async () => {
     setIsLoading(true)
     try {
-      let res: Response
       if (mode === "register") {
         if (password !== confirmPassword) {
           setFieldErrors({
@@ -101,22 +98,12 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
           setIsLoading(false)
           return
         }
-        res = await fetch(`${API_URL}/register`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        })
+        await authService.register({ email, password })
       } else if (mode === "forgot") {
-        res = await fetch(`${API_URL}/forgot-password`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        })
+        await authService.forgotPassword({ email })
       } else {
         throw new Error("Неверный режим отправки кода")
       }
-
-      if (!res.ok) throw new Error(await parseError(res))
 
       setCodeSent(true)
       if (mode === "register") {
@@ -127,7 +114,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
         setCountdownForgot(60)
       }
     } catch (err: any) {
-      setError(err.message || "Ошибка отправки кода")
+      setError(err.detail || err.message || "Ошибка отправки кода")
     } finally {
       setIsLoading(false)
     }
@@ -135,15 +122,9 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
   const verifyCode = async () => {
     try {
-      const res = await fetch(`${API_URL}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      })
-      if (!res.ok) throw new Error(await parseError(res))
-      return await res.json()
+      return await authService.verifyEmail({ email, code })
     } catch (err: any) {
-      setError(err.message || "Ошибка проверки кода")
+      setError(err.detail || err.message || "Ошибка проверки кода")
       return null
     }
   }
@@ -159,15 +140,10 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
     }
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_URL}/reset-password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, new_password: newPassword }),
-      })
-      if (!res.ok) throw new Error(await parseError(res))
+      await authService.resetPassword(email, code, newPassword)
       changeMode("login")
     } catch (err: any) {
-      setError(err.message || "Ошибка сброса пароля")
+      setError(err.detail || err.message || "Ошибка сброса пароля")
     } finally {
       setIsLoading(false)
     }
@@ -176,17 +152,12 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
   const login = async () => {
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_URL}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      })
-      if (!res.ok) throw new Error(await parseError(res))
-      const data = await res.json()
+      const data = await authService.login({ email, password })
       localStorage.setItem("access_token", data.access_token)
       router.push("/dashboard")
     } catch (err: any) {
-      setError(err.message || "Ошибка входа")
+      console.log(err)
+      setError(err.detail || err.message || "Ошибка входа")
     } finally {
       setIsLoading(false)
     }
@@ -214,182 +185,217 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Card>
-        <CardHeader className="text-center">
-          <CardTitle className="text-xl">
-            {mode === "login" && "Добро пожаловать"}
-            {mode === "register" && "Регистрация"}
-            {mode === "forgot" && "Восстановление пароля"}
-            {mode === "reset" && "Новый пароль"}
-          </CardTitle>
-          <CardDescription>
-            {mode === "login" && "Войдите в ваш аккаунт"}
-            {mode === "register" && (codeSent ? "Введите код из письма" : "Создайте новый аккаунт")}
-            {mode === "forgot" && (codeSent ? "Введите код из письма" : "Укажите email")}
-            {mode === "reset" && "Введите новый пароль"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {error && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertTitle>Ошибка</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          <form onSubmit={handleSubmit} className="grid gap-6">
-            {/* Email при login, register(до кода), forgot(до кода) */}
-            {(mode === "login" || (mode === "register" && !codeSent) || (mode === "forgot" && !codeSent)) && (
-              <div className="grid gap-3">
-                <Label>Email</Label>
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className={cn(fieldErrors.email && "border-red-500 focus-visible:ring-red-500")}
-                />
-                {fieldErrors.email && <p className="text-sm text-red-500">{fieldErrors.email}</p>}
-              </div>
-            )}
+      <Card className="overflow-hidden p-0 border-none shadow-lg">
+        <CardContent className="grid p-0 md:grid-cols-2">
+          <div className="flex flex-col">
+            <div className="p-6 md:p-8 flex flex-col h-full">
+              <form onSubmit={handleSubmit} className="flex-grow">
+                <FieldGroup>
+                  <div className="flex flex-col items-center gap-2 text-center mb-4">
+                    <h1 className="text-2xl font-bold">
+                      {mode === "login" && "Добро пожаловать"}
+                      {mode === "register" && "Регистрация"}
+                      {mode === "forgot" && "Восстановление пароля"}
+                      {mode === "reset" && "Новый пароль"}
+                    </h1>
+                    <p className="text-muted-foreground text-balance">
+                      {mode === "login" && "Войдите в ваш аккаунт taam.menu"}
+                      {mode === "register" && (codeSent ? "Введите код из письма" : "Создайте новый аккаунт")}
+                      {mode === "forgot" && (codeSent ? "Введите код из письма" : "Укажите ваш email")}
+                      {mode === "reset" && "Введите новый пароль"}
+                    </p>
+                  </div>
 
-            {/* Пароль при login или register(до кода) */}
-            {(mode === "login" || (mode === "register" && !codeSent)) && (
-              <div className="grid gap-3">
-                <div className="flex items-center">
-                  <Label>Пароль</Label>
-                  {mode === "login" && (
-                    <Button
-                      className="ml-auto text-sm underline-offset-4 hover:underline"
-                      variant="link"
-                      onClick={() => changeMode("forgot")}
-                      type="button"
-                    >
-                      Забыли пароль?
-                    </Button>
+                  {error && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
                   )}
-                </div>
-                <PasswordInput
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  show={showPassword}
-                  setShow={setShowPassword}
-                  error={fieldErrors.password}
-                  required
-                />
-                {fieldErrors.password && <p className="text-sm text-red-500">{fieldErrors.password}</p>}
-              </div>
-            )}
 
-            {/* Подтверждение пароля при register (до кода) */}
-            {mode === "register" && !codeSent && (
-              <div className="grid gap-3">
-                <Label>Подтвердите пароль</Label>
-                <PasswordInput
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  show={showConfirmPassword}
-                  setShow={setShowConfirmPassword}
-                  error={fieldErrors.confirmPassword}
-                  required
-                />
-                {fieldErrors.confirmPassword && <p className="text-sm text-red-500">{fieldErrors.confirmPassword}</p>}
-              </div>
-            )}
+                  {/* Email fields */}
+                  {(mode === "login" || (mode === "register" && !codeSent) || (mode === "forgot" && !codeSent)) && (
+                    <Field>
+                      <FieldLabel htmlFor="email">Email</FieldLabel>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="m@example.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className={cn(fieldErrors.email && "border-red-500")}
+                      />
+                      {fieldErrors.email && <p className="text-xs text-red-500">{fieldErrors.email}</p>}
+                    </Field>
+                  )}
 
-            {/* Сообщение после отправки кода при register */}
-            {mode === "register" && codeSent && (
-              <p className="text-center text-sm text-muted-foreground">
-                Мы отправили код на <span className="font-medium">{email}</span>.  
-                Пожалуйста, проверьте почту — письмо может оказаться в папке <span className="font-medium">Спам</span>.
+                  {/* Password fields for Login and Initial Registration */}
+                  {(mode === "login" || (mode === "register" && !codeSent)) && (
+                    <Field>
+                      <div className="flex items-center">
+                        <FieldLabel htmlFor="password">Пароль</FieldLabel>
+                        {mode === "login" && (
+                          <button
+                            type="button"
+                            onClick={() => changeMode("forgot")}
+                            className="ml-auto text-sm underline-offset-2 hover:underline"
+                          >
+                            Забыли пароль?
+                          </button>
+                        )}
+                      </div>
+                      <PasswordInput
+                        id="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        show={showPassword}
+                        setShow={setShowPassword}
+                        required
+                      />
+                      {fieldErrors.password && <p className="text-xs text-red-500">{fieldErrors.password}</p>}
+                    </Field>
+                  )}
+
+                  {/* Confirm Password for Registration */}
+                  {mode === "register" && !codeSent && (
+                    <Field>
+                      <FieldLabel htmlFor="confirmPassword">Подтвердите пароль</FieldLabel>
+                      <PasswordInput
+                        id="confirmPassword"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        show={showConfirmPassword}
+                        setShow={setShowConfirmPassword}
+                        required
+                      />
+                      {fieldErrors.confirmPassword && <p className="text-xs text-red-500">{fieldErrors.confirmPassword}</p>}
+                    </Field>
+                  )}
+
+                  {/* Identification code fields */}
+                  {(mode === "register" || mode === "forgot" || mode === "reset") && codeSent && (
+                    <Field>
+                      <FieldDescription className="text-center mb-2">
+                        Мы отправили код на <span className="font-medium">{email}</span>.
+                        Проверьте почту (и папку Спам).
+                      </FieldDescription>
+                      <FieldLabel htmlFor="code">Код из письма</FieldLabel>
+                      <Input
+                        id="code"
+                        type="text"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
+                        required
+                        className={cn(fieldErrors.code && "border-red-500")}
+                      />
+                      {fieldErrors.code && <p className="text-xs text-red-500">{fieldErrors.code}</p>}
+
+                      <div className="text-center mt-2">
+                        {(mode === "register" && canResendRegister) || (mode === "forgot" && canResendForgot) ? (
+                          <button type="button" onClick={sendCode} className="text-sm underline hover:no-underline text-muted-foreground">
+                            Отправить код ещё раз
+                          </button>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">
+                            Повторить через {mode === "register" ? countdownRegister : countdownForgot}с
+                          </span>
+                        )}
+                      </div>
+                    </Field>
+                  )}
+
+                  {/* New Password fields for Reset */}
+                  {mode === "reset" && (
+                    <>
+                      <Field>
+                        <FieldLabel htmlFor="newPassword">Новый пароль</FieldLabel>
+                        <PasswordInput
+                          id="newPassword"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          show={showNewPassword}
+                          setShow={setShowNewPassword}
+                          required
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="confirmNewPassword">Подтвердите новый пароль</FieldLabel>
+                        <PasswordInput
+                          id="confirmNewPassword"
+                          value={confirmNewPassword}
+                          onChange={(e) => setConfirmNewPassword(e.target.value)}
+                          show={showConfirmNewPassword}
+                          setShow={setShowConfirmNewPassword}
+                          required
+                        />
+                      </Field>
+                    </>
+                  )}
+
+                  <Field className="mt-2">
+                    <Button type="submit" className="w-full bg-[#FFEB5A] text-[#3d3d3d] hover:bg-[#fbe23f] font-semibold h-11" disabled={isLoading}>
+                      {isLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          {mode === "login" && "Войти"}
+                          {mode === "register" && (codeSent ? "Зарегистрироваться" : "Отправить код")}
+                          {mode === "forgot" && (codeSent ? "Проверить код" : "Отправить код")}
+                          {mode === "reset" && "Сбросить пароль"}
+                        </>
+                      )}
+                    </Button>
+                  </Field>
+
+                  {mode === "login" && (
+                    <>
+                      <FieldSeparator>ИЛИ</FieldSeparator>
+                      <Field>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full h-11 border-2 border-[#FFEB5A] hover:bg-[#FFEB5A]/10"
+                          onClick={() => changeMode("register")}
+                        >
+                          Создать аккаунт
+                        </Button>
+                      </Field>
+                    </>
+                  )}
+
+                  {mode !== "login" && (
+                    <div className="text-center mt-4">
+                      <button
+                        type="button"
+                        onClick={() => changeMode("login")}
+                        className="text-sm text-muted-foreground hover:text-primary underline underline-offset-4"
+                      >
+                        Вернуться ко входу
+                      </button>
+                    </div>
+                  )}
+                </FieldGroup>
+              </form>
+            </div>
+            <div className="p-6 pt-0 text-center">
+              <p className="text-xs text-muted-foreground">
+                Продолжая, вы соглашаетесь с нашими{" "}
+                <a href="/docs/policy.pdf" className="underline underline-offset-2">Условиями обслуживания</a>{" "}
+                и <a href="/docs/policy.pdf" className="underline underline-offset-2">Политикой конфиденциальности</a>.
               </p>
-            )}
-          {mode === "forgot" && codeSent && (
-            <p className="text-center text-sm text-muted-foreground">
-              Мы отправили код для восстановления пароля на <span className="font-medium">{email}</span>.  
-              Пожалуйста, проверьте почту — письмо может оказаться в папке <span className="font-medium">Спам</span>.
-            </p>
-          )}
-
-            {/* Поле кода при register/forgot/reset */}
-            {(mode === "register" || mode === "forgot" || mode === "reset") && codeSent && (
-              <div className="grid gap-3">
-                <Label>Код из письма</Label>
-                <Input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  required
-                  className={cn(fieldErrors.code && "border-red-500 focus-visible:ring-red-500")}
-                />
-                {fieldErrors.code && <p className="text-sm text-red-500">{fieldErrors.code}</p>}
-              </div>
-            )}
-
-            {/* Новый пароль при reset */}
-            {mode === "reset" && (
-              <div className="grid gap-3">
-                <Label>Новый пароль</Label>
-                <PasswordInput
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  show={showNewPassword}
-                  setShow={setShowNewPassword}
-                  error={fieldErrors.newPassword}
-                  required
-                />
-                <Label>Подтвердите новый пароль</Label>
-                <PasswordInput
-                  value={confirmNewPassword}
-                  onChange={(e) => setConfirmNewPassword(e.target.value)}
-                  show={showConfirmNewPassword}
-                  setShow={setShowConfirmNewPassword}
-                  error={fieldErrors.confirmNewPassword}
-                  required
-                />
-              </div>
-            )}
-
-            {/* Кнопка действия */}
-            <Button type="submit" className="w-full flex items-center gap-2 bg-[#FFEB5A] text-[#3d3d3d] hover:bg-[#fbe23f]" disabled={isLoading}>
-              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === "login" && <LogIn className="w-4 h-4" />}
-              {mode === "login"
-                ? "Войти"
-                : mode === "register"
-                ? codeSent
-                  ? "Зарегистрироваться"
-                  : "Отправить код"
-                : mode === "forgot"
-                ? codeSent
-                  ? "Проверить код"
-                  : "Отправить код"
-                : "Сбросить пароль"}
-            </Button>
-
-            {/* Повторная отправка кода */}
-            {(mode === "register" || mode === "forgot") && codeSent && (
-              <div className="text-center text-sm text-muted-foreground">
-                {(mode === "register" && canResendRegister) || (mode === "forgot" && canResendForgot) ? (
-                  <button type="button" onClick={sendCode} className="underline hover:no-underline">
-                    Отправить код ещё раз
-                  </button>
-                ) : (
-                  `Повторить через ${mode === "register" ? countdownRegister : countdownForgot}с`
-                )}
-              </div>
-            )}
-          </form>
-
-          <div className="flex flex-col gap-2 mt-4">
-            {mode === "login" && (
-              <Button variant="outline" onClick={() => changeMode("register")}>
-                Зарегистрироваться
-              </Button>
-            )}
-            {mode !== "login" && (
-              <Button variant="outline" onClick={() => changeMode("login")}>
-                Назад ко входу
-              </Button>
-            )}
+            </div>
+          </div>
+          <div className="bg-muted relative hidden md:block">
+            <img
+              src="/gpt.png"
+              alt="Healthy Food"
+              className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.4]"
+            />
+            {/* <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-8">
+              <p className="text-white text-lg font-medium italic">
+                "Правильное питание — залог вашего успеха и отличного самочувствия с taam.menu"
+              </p>
+            </div> */}
           </div>
         </CardContent>
       </Card>

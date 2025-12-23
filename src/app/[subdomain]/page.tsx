@@ -1,5 +1,5 @@
-// app/[subdomain]/page.tsx
 import MenuPageClient from "./MenuPageClient"
+import { restaurantService, menuService } from "@/services"
 
 // Все типы — только здесь. Компонент ниже — серверный (без "use client")
 interface MenuItem {
@@ -48,12 +48,8 @@ export default async function SubdomainPage({
   const { subdomain } = await params
 
   const [restaurantData, menuData] = await Promise.all([
-    fetch(`http://taam.menu:8003/api/restaurants/by-subdomain/${subdomain}`, {
-      cache: "no-store",
-    }).then((res) => (res.ok ? res.json() : null)),
-    fetch(`http://taam.menu:8003/api/menu/by-subdomain/${subdomain}`, {
-      cache: "no-store",
-    }).then((res) => (res.ok ? res.json() : { categories: [] })),
+    restaurantService.getBySubdomain(subdomain).catch(() => null),
+    menuService.getBySubdomain(subdomain).catch(() => ({ categories: [] })),
   ])
 
   if (!restaurantData) {

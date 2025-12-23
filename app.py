@@ -20,9 +20,13 @@ import json
 import csv
 from io import StringIO
 from uuid import uuid4
-
+from email.mime.base import MIMEBase
+from email import encoders
+from email.mime.multipart import MIMEMultipart
+import base64
 from yookassa import Configuration, Payment
-
+from email.header import Header
+from email.utils import formataddr
 security = HTTPBearer()
 
 # === Настройки ===
@@ -267,7 +271,12 @@ MENU_CATEGORIES = [
 # === FastAPI ===
 app = FastAPI(openapi_url=None)
 
-origins = ["https://localhost:3000"]
+origins = [
+    "https://localhost:3000",
+    "https://clusterunion.ru",
+    "https://www.clusterunion.ru",
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -391,10 +400,53 @@ def init_db():
             FOREIGN KEY (plan_code) REFERENCES subscription_plans (code) ON DELETE CASCADE
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            order_number TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            customer_name TEXT NOT NULL,
+            customer_phone TEXT NOT NULL,
+            delivery_method TEXT NOT NULL,
+            delivery_address TEXT,
+            delivery_zone TEXT,
+            delivery_time TEXT,
+            payment_method TEXT NOT NULL,
+            amount REAL NOT NULL,
+            delivery_cost REAL DEFAULT 0,
+            currency TEXT DEFAULT 'RUB',
+            items TEXT NOT NULL,
+            comment TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (restaurant_id) REFERENCES restaurants (id) ON DELETE CASCADE
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            order_id INTEGER,
+            order_number TEXT,
+            message TEXT NOT NULL,
+            read BOOLEAN DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (restaurant_id) REFERENCES restaurants (id) ON DELETE CASCADE
+        )
+    ''')
     c.execute("PRAGMA table_info(subscription_plans)")
     subscription_columns = [row[1] for row in c.fetchall()]
     if "is_hidden" not in subscription_columns:
         c.execute("ALTER TABLE subscription_plans ADD COLUMN is_hidden BOOLEAN NOT NULL DEFAULT 0")
+    # Migration for restaurant columns
+    c.execute("PRAGMA table_info(restaurants)")
+    restaurant_columns = [row[1] for row in c.fetchall()]
+    if "currency" not in restaurant_columns:
+        c.execute("ALTER TABLE restaurants ADD COLUMN currency TEXT DEFAULT 'RUB'")
+    if "delivery_settings" not in restaurant_columns:
+        c.execute("ALTER TABLE restaurants ADD COLUMN delivery_settings TEXT")
     conn.commit()
     conn.close()
 
@@ -778,7 +830,7 @@ def load_menu_with_limits(restaurant_id: int) -> tuple[list[dict], dict]:
         items: list[dict] = []
         for row in item_rows:
             item_model = format_menu_item_row(row)
-            item = item_model.dict()
+            item = item_model.model_dump()
             if item["view"]:
                 if item_limit is not None and visible_count >= item_limit:
                     item["view"] = False
@@ -928,9 +980,9 @@ def format_menu_item_row(row: tuple) -> "MenuItem":
 
 
 class RestaurantSubscriptionInfo(BaseModel):
-    plan_code: str
-    plan_name: str
-    status: str
+    plan_code: Optional[str] = None
+    plan_name: Optional[str] = None
+    status: Optional[str] = None
     started_at: Optional[str] = None
     expires_at: Optional[str] = None
     amount: Optional[float] = None
@@ -954,6 +1006,8 @@ class Restaurant(BaseModel):
     phone: Optional[str] = None
     qr_code: Optional[str] = None
     subdomain: Optional[str] = None
+    currency: Optional[str] = 'RUB'
+    delivery_settings: Optional[str] = None
     subscription: Optional[RestaurantSubscriptionInfo] = None
 
 class CreateRestaurantRequest(BaseModel):
@@ -986,6 +1040,7 @@ class UpdateRestaurantRequest(BaseModel):
     type: Optional[str] = None
     phone: Optional[str] = None
     subdomain: Optional[str] = None
+    currency: Optional[str] = None
 
 
 class MenuCategory(BaseModel):
@@ -1057,7 +1112,47 @@ class RefreshSubscriptionRequest(BaseModel):
 class CancelSubscriptionRequest(BaseModel):
     payment_id: Optional[str] = None
 
-# === Модели (остальные без изменений) ===
+
+# === Order Models ===
+class OrderItemInput(BaseModel):
+    id: int
+    name: str
+    quantity: int
+    price: float
+
+
+class OrderCreate(BaseModel):
+    customer_name: str
+    customer_phone: str
+    delivery_method: str  # 'delivery' | 'pickup'
+    delivery_address: Optional[str] = None
+    delivery_zone: Optional[str] = None
+    delivery_time: Optional[str] = None
+    payment_method: str
+    items: List[OrderItemInput]
+    comment: Optional[str] = None
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str  # 'pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled'
+
+
+class OrderCancelRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class DeliverySettingsUpdate(BaseModel):
+    zones: Optional[List[dict]] = None
+    min_order_amount: Optional[float] = None
+    delivery_enabled: Optional[bool] = None
+    pickup_enabled: Optional[bool] = None
+    delivery_fee: Optional[float] = None
+
+
+class CurrencyUpdate(BaseModel):
+    currency: str
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -1893,7 +1988,7 @@ def get_restaurant(restaurant_id: int):
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute('''
-        SELECT id, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain
+        SELECT id, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain, currency, delivery_settings
         FROM restaurants WHERE id = ?
     ''', (restaurant_id,))
     row = c.fetchone()
@@ -1921,6 +2016,8 @@ def get_restaurant(restaurant_id: int):
         "type": row[12],
         "phone": row[13],
         "subdomain": row[14],
+        "currency": row[15] or 'RUB',
+        "delivery_settings": row[16],
         "qr_code": get_qr_url(row[0]),
         "subscription": format_subscription_payload(subscription),
     }
@@ -1988,6 +2085,9 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
     if req.subdomain is not None:
         updates.append("subdomain = ?")
         values.append(req.subdomain)
+    if req.currency is not None:
+        updates.append("currency = ?")
+        values.append(req.currency)
     if not updates:
         raise HTTPException(400, "Нет полей для обновления")
     values.append(restaurant_id)
@@ -2006,6 +2106,398 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
         if not new_subdomain and previous_subdomain:
             remove_qr_for_restaurant(restaurant_id)
     return {"message": "Обновлено"}
+
+
+@app.patch("/api/restaurants/{restaurant_id}/currency")
+def update_restaurant_currency(restaurant_id: int, req: CurrencyUpdate, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "UPDATE restaurants SET currency = ? WHERE id = ? AND owner_email = ?",
+        (req.currency, restaurant_id, current_user["email"]),
+    )
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    conn.commit()
+    conn.close()
+    return {"message": "Валюта обновлена"}
+
+
+@app.patch("/api/restaurants/{restaurant_id}/delivery-settings")
+def update_delivery_settings(restaurant_id: int, req: DeliverySettingsUpdate, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute(
+        "SELECT delivery_settings FROM restaurants WHERE id = ? AND owner_email = ?",
+        (restaurant_id, current_user["email"]),
+    )
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    current_settings = json.loads(row[0]) if row[0] else {}
+    if req.zones is not None:
+        current_settings["zones"] = req.zones
+    if req.min_order_amount is not None:
+        current_settings["min_order_amount"] = req.min_order_amount
+    if req.delivery_enabled is not None:
+        current_settings["delivery_enabled"] = req.delivery_enabled
+    if req.pickup_enabled is not None:
+        current_settings["pickup_enabled"] = req.pickup_enabled
+    if req.delivery_fee is not None:
+        current_settings["delivery_fee"] = req.delivery_fee
+
+    c.execute(
+        "UPDATE restaurants SET delivery_settings = ? WHERE id = ? AND owner_email = ?",
+        (json.dumps(current_settings), restaurant_id, current_user["email"]),
+    )
+    conn.commit()
+    conn.close()
+    return {"message": "Настройки доставки обновлены"}
+
+
+@app.post("/api/restaurants/{restaurant_id}/orders")
+def create_guest_order(restaurant_id: int, req: OrderCreate):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check if restaurant exists
+    c.execute("SELECT name, currency FROM restaurants WHERE id = ?", (restaurant_id,))
+    rest_row = c.fetchone()
+    if not rest_row:
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    restaurant_name, currency = rest_row
+    
+    # Generate order number
+    order_number = f"{datetime.now().strftime('%y%m%d')}-{uuid4().hex[:4].upper()}"
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Calculate amount
+    amount = sum(item.price * item.quantity for item in req.items)
+    # Add delivery cost logic if needed, simplify for now
+    delivery_cost = 0.0
+    
+    c.execute(
+        """
+        INSERT INTO orders (
+            restaurant_id, order_number, status, customer_name, customer_phone,
+            delivery_method, delivery_address, delivery_zone, delivery_time,
+            payment_method, amount, delivery_cost, currency, items, comment,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            restaurant_id, order_number, 'pending', req.customer_name, req.customer_phone,
+            req.delivery_method, req.delivery_address, req.delivery_zone, req.delivery_time,
+            req.payment_method, amount, delivery_cost, currency or 'RUB',
+            json.dumps([item.model_dump() for item in req.items]), req.comment,
+            now_str, now_str
+        ),
+    )
+    order_id = c.lastrowid
+    
+    # Create notification
+    notification_msg = f"Новый заказ #{order_number} от {req.customer_name}"
+    c.execute(
+        """
+        INSERT INTO notifications (restaurant_id, type, order_id, order_number, message, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (restaurant_id, 'new_order', order_id, order_number, notification_msg, now_str)
+    )
+    
+    conn.commit()
+    conn.close()
+    return {"order_id": order_id, "order_number": order_number}
+
+
+@app.get("/api/restaurants/{restaurant_id}/orders")
+def get_restaurant_orders(
+    restaurant_id: int,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user: dict = Depends(get_current_user)
+):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    query = "SELECT * FROM orders WHERE restaurant_id = ?"
+    params = [restaurant_id]
+    
+    if status and status != 'all':
+        query += " AND status = ?"
+        params.append(status)
+    
+    if search:
+        query += " AND (order_number LIKE ? OR customer_name LIKE ? OR customer_phone LIKE ?)"
+        search_val = f"%{search}%"
+        params.extend([search_val, search_val, search_val])
+    
+    query += " ORDER BY created_at DESC"
+    
+    c.execute(query, tuple(params))
+    rows = c.fetchall()
+    
+    orders = []
+    columns = [desc[0] for desc in c.description]
+    for row in rows:
+        order = dict(zip(columns, row))
+        order["items"] = json.loads(order["items"])
+        orders.append(order)
+    
+    conn.close()
+    return {"orders": orders}
+
+
+@app.get("/api/restaurants/{restaurant_id}/orders/active")
+def get_active_orders(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    # Active statuses: pending, cooking, ready, courier
+    active_statuses = ('pending', 'cooking', 'ready', 'courier')
+    c.execute(
+        "SELECT * FROM orders WHERE restaurant_id = ? AND status IN (?, ?, ?, ?) ORDER BY created_at ASC",
+        (restaurant_id, *active_statuses)
+    )
+    rows = c.fetchall()
+    
+    orders = []
+    columns = [desc[0] for desc in c.description]
+    for row in rows:
+        order = dict(zip(columns, row))
+        order["items"] = json.loads(order["items"])
+        orders.append(order)
+    
+    conn.close()
+    return {"orders": orders}
+
+
+@app.patch("/api/restaurants/{restaurant_id}/orders/{order_id}/status")
+def update_order_status(restaurant_id: int, order_id: int, req: OrderStatusUpdate, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute(
+        "UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND restaurant_id = ?",
+        (req.status, now_str, order_id, restaurant_id)
+    )
+    
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "Заказ не найден")
+    
+    conn.commit()
+    conn.close()
+    return {"message": "Статус обновлен"}
+
+
+@app.get("/api/restaurants/{restaurant_id}/stats/dashboard")
+def get_dashboard_stats(
+    restaurant_id: int,
+    period: str = "30",  # "7", "30", "all"
+    current_user: dict = Depends(get_current_user)
+):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    # Date filter
+    date_filter = ""
+    params = [restaurant_id]
+    if period != "all":
+        # Map named periods or use numeric string
+        period_map = {
+            "day": 1,
+            "week": 7,
+            "month": 30,
+            "year": 365
+        }
+        try:
+            days = int(period)
+        except ValueError:
+            days = period_map.get(period.lower(), 7) # Default to 7 if invalid
+            
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        date_filter = " AND created_at >= ?"
+        params.append(start_date)
+    
+    # 1. Basic metrics (total orders, revenue, avg check)
+    c.execute(
+        f"SELECT COUNT(*), SUM(amount), AVG(amount) FROM orders WHERE restaurant_id = ? {date_filter} AND status != 'canceled'",
+        tuple(params)
+    )
+    total_orders, total_revenue, avg_check = c.fetchone()
+    total_revenue = total_revenue or 0.0
+    avg_check = avg_check or 0.0
+    
+    # 2. Orders by status
+    c.execute(
+        f"SELECT status, COUNT(*) FROM orders WHERE restaurant_id = ? {date_filter} GROUP BY status",
+        tuple(params)
+    )
+    orders_by_status = dict(c.fetchall())
+    
+    # 3. Sales by category and item (parsing JSON items)
+    c.execute(
+        f"SELECT items FROM orders WHERE restaurant_id = ? {date_filter} AND status != 'canceled'",
+        tuple(params)
+    )
+    rows = c.fetchall()
+    
+    sales_by_item = {}
+    
+    for (items_json,) in rows:
+        items = json.loads(items_json)
+        for item in items:
+            item_id = item.get("id")
+            name = item.get("name")
+            qty = item.get("quantity", 0)
+            price = item.get("price", 0)
+            
+            if item_id not in sales_by_item:
+                sales_by_item[item_id] = {"name": name, "quantity": 0, "revenue": 0.0}
+            
+            sales_by_item[item_id]["quantity"] += qty
+            sales_by_item[item_id]["revenue"] += qty * price
+    
+    # Sort and take top items
+    top_items = sorted(sales_by_item.values(), key=lambda x: x["revenue"], reverse=True)[:10]
+    
+    # 4. Sales over time (chart data)
+    # Group by day
+    c.execute(
+        f"""
+        SELECT date(created_at) as day, SUM(amount), COUNT(*) 
+        FROM orders 
+        WHERE restaurant_id = ? {date_filter} AND status != 'canceled'
+        GROUP BY day 
+        ORDER BY day ASC
+        """,
+        tuple(params)
+    )
+    # 3. Aggregated stats from individual orders
+    orders_by_status = {s: 0 for s in ['pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled']}
+    sales_by_item = {}  # name -> {count, revenue}
+    sales_by_category = {} # category -> {count, revenue}
+    
+    c.execute(f"SELECT status, items FROM orders WHERE restaurant_id = ? {date_filter}", tuple(params))
+    for row in c.fetchall():
+        status, items_json = row
+        if status in orders_by_status:
+            orders_by_status[status] += 1
+        
+        try:
+            items = json.loads(items_json)
+            for it in items:
+                name = it.get('name', 'Unknown')
+                qty = it.get('quantity', 1)
+                price = it.get('price', 0)
+                
+                if name not in sales_by_item:
+                    sales_by_item[name] = {"item": name, "count": 0, "revenue": 0}
+                sales_by_item[name]["count"] += qty
+                sales_by_item[name]["revenue"] += qty * price
+        except:
+            continue
+
+    # Sort and format
+    sorted_items = sorted(sales_by_item.values(), key=lambda x: x["revenue"], reverse=True)
+    
+    conn.close()
+    
+    return {
+        "total_orders": total_orders,
+        "total_revenue": total_revenue,
+        "average_check": avg_check or 0,
+        "orders_by_status": orders_by_status,
+        "sales_by_item": sorted_items,
+        "sales_by_category": [], # Requires more complex joins, leave empty for now or implement if needed
+        "chart_data": chart_data,
+        "delivery_time_avg": 0, # Not tracked yet
+        "dispatch_time_avg": 0  # Not tracked yet
+    }
+
+
+@app.get("/api/restaurants/{restaurant_id}/notifications")
+def get_restaurant_notifications(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    c.execute(
+        "SELECT * FROM notifications WHERE restaurant_id = ? ORDER BY created_at DESC LIMIT 50",
+        (restaurant_id,)
+    )
+    rows = c.fetchall()
+    
+    notifications = []
+    columns = [desc[0] for desc in c.description]
+    for row in rows:
+        notifications.append(dict(zip(columns, row)))
+    
+    conn.close()
+    return {"notifications": notifications}
+
+
+@app.post("/api/restaurants/{restaurant_id}/orders/{order_id}/cancel")
+def cancel_order(restaurant_id: int, order_id: int, req: OrderCancelRequest, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    
+    # Check ownership
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+    
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute(
+        "UPDATE orders SET status = 'canceled', updated_at = ? WHERE id = ? AND restaurant_id = ?",
+        (now_str, order_id, restaurant_id)
+    )
+    
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "Заказ не найден")
+    
+    conn.commit()
+    conn.close()
+    return {"message": "Заказ отменен"}
 
 
 @app.delete("/api/restaurants/{restaurant_id}")
@@ -3345,5 +3837,74 @@ def refresh_restaurant_subscription(
     conn.close()
     return {"status": payment_status or "pending"}
 
+TILDA_MAIL_USERNAME = "DOCRF.SITE@yandex.ru"
+TILDA_MAIL_SERVER = "smtp.yandex.ru"
+TILDA_MAIL_PORT = 465
+TILDA_MAIL_PASSWORD = "bsmcvjjfpriaoyce"
+
+class TildaEmailWithPdfRequest(BaseModel):
+    subject: str = "Ежемесячная отчетность"
+    body: str
+    pdf_base64: str       
+    filename: str = "plan.pdf"
+    to_email: EmailStr | None = None
+
+
+def send_email_with_attachment(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    file_bytes: bytes,
+    filename: str,
+):
+    msg = MIMEMultipart()
+    msg["From"] = TILDA_MAIL_USERNAME
+    msg["To"] = to_email
+    msg["Subject"] = Header(subject, "utf-8")
+
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    part = MIMEBase("application", "pdf")
+    part.set_payload(file_bytes)
+    encoders.encode_base64(part)
+
+    part.add_header(
+        "Content-Disposition",
+        "attachment",
+        filename=("utf-8", "", filename),
+    )
+
+    msg.attach(part)
+
+    with smtplib.SMTP_SSL(TILDA_MAIL_SERVER, TILDA_MAIL_PORT) as server:
+        server.login(TILDA_MAIL_USERNAME, TILDA_MAIL_PASSWORD)
+        server.sendmail(TILDA_MAIL_USERNAME, [to_email], msg.as_string())
+
+@app.post("/api/send-email-tilda-file")
+async def send_email_tilda_file(
+    file: UploadFile = File(...),
+    subject: str = Form("План отраслевого комитета"),
+    body: str = Form("Ежемесячный отчет"),
+    to_email: str = Form(None),
+):
+    try:
+        target_email = to_email or "it.mikita@gmail.com"
+        file_bytes = await file.read()
+        filename = file.filename or "plan.pdf"
+        send_email_with_attachment(
+            to_email=target_email,
+            subject=subject,
+            html_body=body,
+            file_bytes=file_bytes,
+            filename=filename,
+        )
+
+        return {"success": True, "message": "Email с PDF отправлен"}
+
+    except Exception as e:
+        print("Ошибка при отправке email от Tilda (file):", e)
+        raise HTTPException(status_code=500, detail="Не удалось отправить email")
+
+    
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8003)

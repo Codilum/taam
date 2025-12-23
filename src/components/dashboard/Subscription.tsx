@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { showErrorToast } from "@/lib/show-error-toast"
+import { subscriptionService } from "@/services"
 
 type SubscriptionInfo = {
   plan_code: string | null
@@ -74,13 +75,6 @@ const badgeVariants: Record<string, "default" | "secondary" | "destructive" | "o
   canceled: "destructive",
 }
 
-const parseMessage = (data: any, raw: string, fallback: string) => {
-  if (typeof data === "string" && data.trim()) return data
-  if (data && typeof data.message === "string" && data.message.trim()) return data.message
-  if (data && typeof data.detail === "string" && data.detail.trim()) return data.detail
-  if (data && typeof data.error === "string" && data.error.trim()) return data.error
-  return raw?.trim() || fallback
-}
 
 const formatCurrency = (amount: number, currency: string) => {
   try {
@@ -140,37 +134,14 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
       setLimits(null)
       return
     }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setLoadingSubscription(true)
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось загрузить подписку")
-        showErrorToast(message)
-        return
-      }
+      const data = await subscriptionService.getSubscription(activeTeam)
       setSubscription(data?.subscription ?? null)
       setLimits(data?.limits ?? null)
       window.dispatchEvent(new CustomEvent("subscription:updated"))
-    } catch (error) {
+    } catch (error: any) {
       console.error(error)
-      showErrorToast("Не удалось загрузить подписку")
+      showErrorToast(error.detail || error.message || "Не удалось загрузить подписку")
     } finally {
       setLoadingSubscription(false)
     }
@@ -181,39 +152,16 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
       setHistory([])
       return
     }
-    const token = localStorage.getItem("access_token")
-    if (!token) {
-      showErrorToast("Нет доступа. Авторизуйтесь повторно")
-      return
-    }
-    setLoadingHistory(true)
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}/subscription/history`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      })
-      const raw = await res.text()
-      let data: any = null
-      if (raw) {
-        try {
-          data = JSON.parse(raw)
-        } catch {
-          data = null
-        }
-      }
-      if (!res.ok) {
-        const message = parseMessage(data, raw, "Не удалось загрузить историю")
-        showErrorToast(message)
-        return
-      }
+      const data = await subscriptionService.getHistory(activeTeam)
       if (Array.isArray(data?.history)) {
         setHistory(data.history)
       } else {
         setHistory([])
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error)
-      showErrorToast("Не удалось загрузить историю подписок")
+      showErrorToast(error.detail || error.message || "Не удалось загрузить историю подписок")
     } finally {
       setLoadingHistory(false)
     }
@@ -279,11 +227,11 @@ export default function Subscription({ activeTeam }: { activeTeam: string }) {
   const statusIcon = getStatusIcon(subscription?.status || null)
   const statusVariant = badgeVariants[subscription?.status || ""] || "outline"
 
-    return (
-      <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <h2 className="text-xl font-bold">Подписка и история</h2>
-        </div>
+  return (
+    <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <h2 className="text-xl font-bold">Подписка и история</h2>
+      </div>
 
       <Card className="overflow-hidden border-none bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
         <CardHeader>

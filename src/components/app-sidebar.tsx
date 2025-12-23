@@ -6,20 +6,63 @@ import {
   GalleryVerticalEnd,
   Settings2,
   SquareTerminal,
+  ShoppingCart,
 } from "lucide-react"
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
 import { TeamSwitcher } from "@/components/team-switcher"
 import { QrCard } from "@/components/sidebar-opt-in-form"
+import { userService, restaurantService } from "@/services"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
+  SidebarInput,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-mobile"
+import {
+  Home,
+  Building2,
+  Menu as MenuIcon,
+  Truck,
+  CreditCard,
+  CircleDollarSign,
+  List,
+  ClipboardList,
+  LayoutDashboard,
+  Search,
+} from "lucide-react"
+
+export function SearchForm({
+  value,
+  onSearchChange,
+  ...props
+}: React.ComponentProps<"form"> & {
+  value: string;
+  onSearchChange: (value: string) => void
+}) {
+  return (
+    <form {...props} onSubmit={(e) => e.preventDefault()}>
+      <SidebarGroup className="py-0">
+        <SidebarGroupContent className="relative">
+          <SidebarInput
+            id="search"
+            placeholder="поиск..."
+            className="pl-8"
+            value={value}
+            onChange={(e) => onSearchChange(e.target.value)}
+          />
+          <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 opacity-50 select-none" />
+        </SidebarGroupContent>
+      </SidebarGroup>
+    </form>
+  )
+}
 
 interface UserData {
   email: string
@@ -76,13 +119,7 @@ export function AppSidebar({
   useEffect(() => {
     async function fetchUserData() {
       try {
-        const token = localStorage.getItem("access_token")
-        if (!token) throw new Error("No token")
-        const response = await fetch("/api/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!response.ok) throw new Error("Failed to fetch user data")
-        const data: UserData = await response.json()
+        const data = await userService.getMe()
         setUser({
           email: data.email,
           first_name: data.first_name,
@@ -111,13 +148,8 @@ export function AppSidebar({
     if (!activeTeam) return
     setLoadingRestaurant(true)
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
-      })
-      if (res.ok) {
-        const data: RestaurantData = await res.json()
-        setRestaurantData(data)
-      }
+      const data = await restaurantService.getRestaurant(activeTeam)
+      setRestaurantData(data)
     } catch (error) {
       console.error("Ошибка загрузки данных ресторана:", error)
       setRestaurantData(null)
@@ -149,36 +181,67 @@ export function AppSidebar({
     return () => window.removeEventListener("restaurant:updated", handler as EventListener)
   }, [activeTeam, fetchRestaurant])
 
-  // Обработчик клика по пункту меню
-  const handleNavClick = (block: string) => {
-    setActiveBlock(block)
-    if (isMobile) {
-      setOpen(false) // 👈 закрыть панель на мобиле
-    }
-  }
+  const [searchQuery, setSearchQuery] = useState("")
+
+  const handleNavClick = useCallback(
+    (block: string) => {
+      setActiveBlock(block)
+      if (isMobile) {
+        setOpen(false)
+      }
+    },
+    [setActiveBlock, isMobile, setOpen]
+  )
 
   // Данные для навигации
   const navData = {
     navMain: [
       {
-        title: "Мое заведение",
+        title: "Главная",
         url: "view",
-        icon: SquareTerminal,
-        isActive: true,
+        icon: Home,
+      },
+      {
+        title: "Заведение",
+        url: "edit-data",
+        icon: Building2,
         items: [
-          { title: "Посмотреть меню", url: "view" },
-          { title: "Изменить меню", url: "edit-menu" },
-          { title: "Данные ресторана", url: "edit-data" },
+          { title: "Основные", url: "edit-data-general" },
+          { title: "Дополнительно", url: "edit-data-additional" },
+          { title: "Время работы", url: "edit-data-hours" },
+          { title: "Способы доставки", url: "edit-data-delivery" },
         ],
       },
       {
-        title: "Подписка",
-        url: "subscription",
-        icon: Settings2,
+        title: "Электронное меню",
+        url: "edit-menu",
+        icon: ShoppingCart,
         items: [
-          { title: "Подписка и история", url: "subscription" },
-          { title: "Тарифы", url: "tariffs" },
+          { title: "Категории", url: "edit-menu-categories" },
+          { title: "Позиции", url: "edit-menu-items" },
+          { title: "Интеграции", url: "edit-menu-integrations" }
         ],
+      },
+      {
+        title: "Доставка",
+        url: "delivery",
+        icon: Truck,
+        items: [
+          { title: "Заказы", url: "orders" },
+          { title: "Терминал", url: "terminal" },
+          { title: "Уведомления", url: "notifications" },
+          { title: "Статистика", url: "statistics" },
+        ],
+      },
+      {
+        title: "Тариф",
+        url: "subscription",
+        icon: CreditCard,
+      },
+      {
+        title: "Валюта",
+        url: "currency",
+        icon: CircleDollarSign,
       },
     ],
     teams: [
@@ -191,15 +254,36 @@ export function AppSidebar({
     ],
   }
 
+  const filterMenu = (items: any[]): any[] => {
+    return items
+      .map((item) => {
+        const matches = item.title.toLowerCase().includes(searchQuery.toLowerCase())
+        const filteredChildren = item.items ? filterMenu(item.items) : []
+
+        if (matches || filteredChildren.length > 0) {
+          return {
+            ...item,
+            isActive: searchQuery ? true : item.isActive,
+            items: filteredChildren.length > 0 ? filteredChildren : item.items,
+          }
+        }
+        return null
+      })
+      .filter(Boolean)
+  }
+
+  const filteredNavMain = searchQuery ? filterMenu(navData.navMain) : navData.navMain
+
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <TeamSwitcher activeTeam={activeTeam} setActiveTeam={setActiveTeam} />
+        <SearchForm value={searchQuery} onSearchChange={setSearchQuery} />
       </SidebarHeader>
 
       <SidebarContent>
         {/* 👇 сюда передаем обработчик */}
-        <NavMain items={navData.navMain} setActiveBlock={handleNavClick} />
+        <NavMain items={filteredNavMain} setActiveBlock={handleNavClick} />
       </SidebarContent>
 
       <SidebarFooter>

@@ -38,35 +38,8 @@ import {
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { showErrorToast } from "@/lib/show-error-toast"
+import { userService } from "@/services"
 
-const parseUploadError = async (res: Response, fallback: string) => {
-  try {
-    const text = await res.text()
-    if (!text) return fallback
-
-    try {
-      const data = JSON.parse(text) as any
-      if (typeof data === "string" && data.trim()) return data
-      if (data && typeof data.message === "string" && data.message.trim()) {
-        return data.message
-      }
-      if (data && typeof data.detail === "string" && data.detail.trim()) {
-        return data.detail
-      }
-      if (data && typeof data.error === "string" && data.error.trim()) {
-        return data.error
-      }
-    } catch {
-      if (text.trim()) {
-        return text
-      }
-    }
-  } catch {
-    return fallback
-  }
-
-  return fallback
-}
 
 // Тип для данных аккаунта
 interface AccountData {
@@ -94,19 +67,13 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
   useEffect(() => {
     const fetchProfile = async () => {
       try {
-        const token = localStorage.getItem("access_token")
-        if (!token) throw new Error("No token")
-        const response = await fetch("/api/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!response.ok) throw new Error("Failed to fetch profile")
-        const data: AccountData = await response.json()
+        const data: AccountData = await userService.getMe()
         setAccountData(data)
         setShowIncompleteProfileAlert(!data.is_profile_complete)
-        setLoading(false)
-      } catch (error) {
+      } catch (error: any) {
         console.error("Ошибка загрузки профиля:", error)
-        showErrorToast("Ошибка загрузки профиля")
+        showErrorToast(error.detail || error.message || "Ошибка загрузки профиля")
+      } finally {
         setLoading(false)
       }
     }
@@ -136,8 +103,6 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
   const handleSaveProfileChanges = async () => {
     if (!accountData) return
     try {
-      const token = localStorage.getItem("access_token")
-      if (!token) throw new Error("No token")
 
       // Обновление имени, фамилии и телефона
       const updateData: Partial<AccountData> = {}
@@ -152,16 +117,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
       }
 
       if (Object.keys(updateData).length > 0) {
-        const response = await fetch("/api/account", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(updateData),
-        })
-        if (!response.ok) throw new Error("Failed to update profile")
-        const data: AccountData = await response.json()
+        const data: AccountData = await userService.updateProfile(updateData)
         setAccountData({ ...accountData, ...data })
         setShowIncompleteProfileAlert(!data.is_profile_complete)
       }
@@ -169,21 +125,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
       // Загрузка фото
       if (newPhotoFile) {
         setUploadingPhoto(true)
-        const formData = new FormData()
-        formData.append("file", newPhotoFile)
-        const photoResponse = await fetch("/api/upload-photo", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: formData,
-        })
-        if (!photoResponse.ok) {
-          const message = await parseUploadError(
-            photoResponse,
-            "Ошибка загрузки фото"
-          )
-          throw new Error(message)
-        }
-        const photoData: AccountData = await photoResponse.json()
+        const photoData: AccountData = await userService.uploadPhoto(newPhotoFile)
         setAccountData({ ...accountData, photo: photoData.photo, is_profile_complete: photoData.is_profile_complete })
         setShowIncompleteProfileAlert(!photoData.is_profile_complete)
         setNewPhotoFile(null)
@@ -207,18 +149,13 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
   // Удаление аккаунта
   const handleDeleteAccount = async () => {
     try {
-      const token = localStorage.getItem("access_token")
-      if (!token) throw new Error("No token")
-      const response = await fetch("/api/account", {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!response.ok) throw new Error("Failed to delete account")
+      await userService.deleteAccount()
       localStorage.removeItem("access_token")
       window.location.href = "/login"
       toast.success("Аккаунт удалён")
-    } catch (error) {
-      showErrorToast("Не удалось удалить аккаунт")
+    } catch (error: any) {
+      console.error(error)
+      showErrorToast(error.detail || error.message || "Не удалось удалить аккаунт")
     }
   }
 
@@ -372,7 +309,7 @@ export default function AccountSettings({ activeTeam }: { activeTeam: string }) 
               <AlertDialogFooter>
                 <AlertDialogCancel>Отмена</AlertDialogCancel>
                 <AlertDialogAction asChild>
-                  <Button variant="destructive" onClick={handleDeleteAccount}>
+                  <Button variant="destructive" onClick={handleDeleteAccount} style={{ color: '#fff' }}>
                     Удалить
                   </Button>
                 </AlertDialogAction>

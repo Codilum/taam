@@ -7,7 +7,7 @@ import {
   ChevronsUpDown,
   LogOut,
   Settings,
-  
+
 } from "lucide-react";
 import {
   Avatar,
@@ -100,7 +100,7 @@ export function NavUser({
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleSupportClick}>
                 <MailQuestionMark className="mr-2 h-4 w-4" />
-                Поддержка
+                Написать в поддержку
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

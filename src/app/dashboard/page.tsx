@@ -19,12 +19,23 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import ViewData from "@/components/dashboard/ViewData"
-import EditMenu from "@/components/dashboard/EditMenu"
-import EditData from "@/components/dashboard/EditData"
+import Categories from "@/components/dashboard/menu/Categories"
+import MenuItems from "@/components/dashboard/menu/MenuItems"
+import Integrations from "@/components/dashboard/menu/Integrations"
+import GeneralInfo from "@/components/dashboard/restaurant/GeneralInfo"
+import AdditionalInfo from "@/components/dashboard/restaurant/AdditionalInfo"
+import WorkingHours from "@/components/dashboard/restaurant/WorkingHours"
+import DeliverySettings from "@/components/dashboard/restaurant/DeliverySettings"
 import Subscription from "@/components/dashboard/Subscription"
 import Tariffs from "@/components/dashboard/Tariffs"
 import AccountSettings from "@/components/dashboard/AccountSettings"
+import Currency from "@/components/dashboard/Currency"
+import OrdersList from "@/components/dashboard/orders/OrdersList"
+import Terminal from "@/components/dashboard/orders/Terminal"
+import Notifications from "@/components/dashboard/orders/Notifications"
+import Statistics from "@/components/dashboard/analytics/Statistics"
 import { Skeleton } from "@/components/ui/skeleton"
+import { userService, restaurantService } from "@/services"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircleIcon } from "lucide-react"
 
@@ -41,11 +52,22 @@ type AccountData = {
 
 const dashboardBlocks = [
   "view",
-  "edit-menu",
+  "edit-menu-categories",
+  "edit-menu-items",
+  "edit-menu-integrations",
   "edit-data",
+  "edit-data-general",
+  "edit-data-additional",
+  "edit-data-hours",
+  "edit-data-delivery",
   "subscription",
   "tariffs",
   "account-settings",
+  "currency",
+  "orders",
+  "terminal",
+  "notifications",
+  "statistics",
 ]
 
 function LoadingFallback() {
@@ -69,16 +91,35 @@ function DynamicBreadcrumb({
 }) {
   const breadcrumbMap: { [key: string]: string } = {
     view: "Просмотр данных",
-    "edit-menu": "Изменить меню",
+    "edit-menu-categories": "Категории",
+    "edit-menu-items": "Позиции",
+    "edit-menu-integrations": "Интеграции",
     "edit-data": "Изменить данные",
+    "edit-data-general": "Основные настройки",
+    "edit-data-additional": "Дополнительно",
+    "edit-data-hours": "Время работы",
+    "edit-data-delivery": "Способы доставки",
     subscription: "Подписка и история",
     tariffs: "Тарифы",
     "account-settings": "Настройки аккаунта",
+    currency: "Валюта",
+    orders: "Заказы",
+    terminal: "Терминал",
+    notifications: "Уведомления",
+    statistics: "Статистика",
   }
 
-  const showRestaurantBreadcrumb = ["view", "edit-menu", "edit-data"].includes(
-    activeBlock,
-  )
+  const showRestaurantBreadcrumb = [
+    "view",
+    "edit-menu-categories",
+    "edit-menu-items",
+    "edit-menu-integrations",
+    "edit-data",
+    "edit-data-general",
+    "edit-data-additional",
+    "edit-data-hours",
+    "edit-data-delivery"
+  ].includes(activeBlock)
 
   return (
     <Breadcrumb>
@@ -131,6 +172,12 @@ function DashboardInner() {
   const goTo = useCallback(
     (teamId: string, block: string, method: "push" | "replace" = "push") => {
       const safeBlock = dashboardBlocks.includes(block) ? block : "view"
+      const activeElement = document.activeElement as HTMLElement
+      // Prevent focus loss loop if interacting with form elements
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+        // Should allow navigation, but be careful of loops
+      }
+
       setActiveTeam(teamId)
       setActiveBlock(safeBlock)
       updateRoute(teamId, safeBlock, method)
@@ -170,23 +217,10 @@ function DashboardInner() {
     async function fetchData() {
       setLoading(true)
       try {
-        const token = localStorage.getItem("access_token")
-        if (!token) throw new Error("No token")
-
-        const profileRes = await fetch("/api/me", {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        })
-        if (!profileRes.ok) throw new Error("Failed to fetch profile")
-        const profileData: AccountData = await profileRes.json()
+        const profileData = await userService.getMe()
         if (!cancelled) setProfile(profileData)
 
-        const res = await fetch("/api/restaurants", {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        })
-        if (!res.ok) throw new Error("Failed to fetch restaurants")
-        const data = await res.json()
+        const data = await restaurantService.getRestaurants()
         if (!cancelled && Array.isArray(data)) {
           if (data.length > 0) {
             const params =
@@ -239,13 +273,23 @@ function DashboardInner() {
 
   const blockComponents: { [key: string]: ReactNode } = {
     view: <ViewData activeTeam={activeTeam} />,
-    "edit-menu": <EditMenu activeTeam={activeTeam} />,
-    "edit-data": <EditData activeTeam={activeTeam} />,
+    "edit-menu-categories": <Categories activeTeam={activeTeam} />,
+    "edit-menu-items": <MenuItems activeTeam={activeTeam} />,
+    "edit-menu-integrations": <Integrations activeTeam={activeTeam} />,
+    "edit-data": <GeneralInfo activeTeam={activeTeam} />,
+    "edit-data-general": <GeneralInfo activeTeam={activeTeam} />,
+    "edit-data-additional": <AdditionalInfo activeTeam={activeTeam} />,
+    "edit-data-hours": <WorkingHours activeTeam={activeTeam} />,
+    "edit-data-delivery": <DeliverySettings activeTeam={activeTeam} />,
     subscription: <Subscription activeTeam={activeTeam} />,
     tariffs: <Tariffs activeTeam={activeTeam} />,
     "account-settings": <AccountSettings activeTeam={activeTeam} />,
+    currency: <Currency activeTeam={activeTeam} />,
+    orders: <OrdersList activeTeam={activeTeam} />,
+    terminal: <Terminal activeTeam={activeTeam} />,
+    notifications: <Notifications activeTeam={activeTeam} />,
+    statistics: <Statistics activeTeam={activeTeam} />,
   }
-
   if (loading) {
     return <LoadingFallback />
   }

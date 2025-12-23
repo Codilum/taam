@@ -7,9 +7,15 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircleIcon } from "lucide-react"
+import { AlertCircleIcon, ShoppingCart, Plus } from "lucide-react"
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden"
 import { cn } from "@/lib/utils"
+import { useCart } from "@/hooks/useCart"
+import Cart from "@/components/menu/Cart"
+import { toast } from "sonner"
+import { Instagram, Send, MessageSquare, Phone, MapPin, Globe, Clock, ChevronLeft, ChevronRight } from "lucide-react"
+import { orderService } from "@/services"
+import { formatCurrency } from "@/lib/utils"
 
 interface MenuItem {
   id: number
@@ -42,6 +48,7 @@ interface RestaurantData {
   vk: string | null
   whatsapp: string | null
   features: string[]
+  id: number
   menu: MenuCategory[]
   phone: string | null
   subdomain: string | null
@@ -51,8 +58,11 @@ interface RestaurantData {
 function formatHours(hours: string | null) {
   if (!hours) return "—"
   try {
-    const parsed = JSON.parse(hours) as { days: string; open: string; close: string }[]
-    return parsed.map((h) => `${h.days}: ${h.open} - ${h.close}`).join("\n")
+    const parsed = JSON.parse(hours)
+    if (Array.isArray(parsed)) {
+      return parsed.map((h: any) => `${h.days}: ${h.open} - ${h.close}`).join("\n")
+    }
+    return hours
   } catch {
     return hours
   }
@@ -60,6 +70,7 @@ function formatHours(hours: string | null) {
 
 export default function MenuPageClient({ data }: { data: RestaurantData }) {
   const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours
+  const cart = useCart()
 
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [currentItemIndex, setCurrentItemIndex] = useState<number>(-1)
@@ -68,6 +79,16 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
   const handleItemClick = (item: MenuItem, index: number) => {
     setSelectedItem(item)
     setCurrentItemIndex(index)
+  }
+
+  const handleAddToCart = (item: MenuItem) => {
+    cart.addItem({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      photo: item.photo
+    })
+    toast.success(`${item.name} добавлен в корзину`)
   }
 
   const findCatByItem = (item: MenuItem | null) =>
@@ -120,13 +141,13 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
   const isFirst =
     selectedItem && currentCat
       ? currentCat.items[0].id === selectedItem.id &&
-        data.menu.findIndex(c => c.id === currentCat.id) === 0
+      data.menu.findIndex(c => c.id === currentCat.id) === 0
       : true
 
   const isLast =
     selectedItem && currentCat
       ? currentCat.items[currentCat.items.length - 1].id === selectedItem.id &&
-        data.menu.findIndex(c => c.id === currentCat.id) === data.menu.length - 1
+      data.menu.findIndex(c => c.id === currentCat.id) === data.menu.length - 1
       : true
 
   return (
@@ -156,12 +177,54 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
           <div className="flex flex-wrap gap-2">
             {data.features.map(f => <Badge key={f}>{f}</Badge>)}
           </div>
-          <p>{data.description}</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div><strong>Город</strong><p>{data.city || "—"}</p></div>
-            <div><strong>Адрес</strong><p>{data.address || "—"}</p></div>
-            <div><strong>Телефон</strong><p>{data.phone || "—"}</p></div>
-            <div><strong>График</strong><p className="whitespace-pre-line">{formatHours(data.hours)}</p></div>
+          <p className="text-gray-600">{data.description}</p>
+
+          <div className="flex flex-wrap gap-4 pt-2">
+            {data.city && (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <MapPin className="w-4 h-4" />
+                <span>{data.city}, {data.address}</span>
+              </div>
+            )}
+            {data.phone && (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <Phone className="w-4 h-4" />
+                <span>{data.phone}</span>
+              </div>
+            )}
+            {data.hours && (
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <Clock className="w-4 h-4" />
+                <span className="whitespace-pre-line">{formatHours(data.hours)}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            {data.instagram && (
+              <a href={data.instagram.startsWith('http') ? data.instagram : `https://instagram.com/${data.instagram}`} target="_blank" rel="noopener noreferrer"
+                className="w-10 h-10 rounded-full bg-pink-50 text-pink-600 flex items-center justify-center hover:bg-pink-100 transition-colors">
+                <Instagram className="w-5 h-5" />
+              </a>
+            )}
+            {data.telegram && (
+              <a href={data.telegram.startsWith('http') ? data.telegram : `https://t.me/${data.telegram.replace('@', '')}`} target="_blank" rel="noopener noreferrer"
+                className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 transition-colors">
+                <Send className="w-5 h-5" />
+              </a>
+            )}
+            {data.vk && (
+              <a href={data.vk.startsWith('http') ? data.vk : `https://vk.com/${data.vk}`} target="_blank" rel="noopener noreferrer"
+                className="w-10 h-10 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center hover:bg-blue-100 transition-colors">
+                <Globe className="w-5 h-5" />
+              </a>
+            )}
+            {data.whatsapp && (
+              <a href={data.whatsapp.startsWith('http') ? data.whatsapp : `https://wa.me/${data.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center hover:bg-green-100 transition-colors">
+                <MessageSquare className="w-5 h-5" />
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -189,7 +252,7 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {cat.items.map((item, idx) => (
                 <div key={item.id} className="cursor-pointer rounded-xl p-2 hover:bg-gray-100"
-                     onClick={() => handleItemClick(item, idx)}>
+                  onClick={() => handleItemClick(item, idx)}>
                   {item.photo ? (
                     <Image src={item.photo} alt={item.name} width={256} height={128} className="object-cover w-full h-32 rounded-xl mb-2" />
                   ) : (
@@ -223,13 +286,29 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
             <h2 className="text-2xl font-bold text-center">{selectedItem?.name}</h2>
             <p className="text-sm text-gray-600 break-all">{selectedItem?.description || "Нет описания"}</p>
 
+            <div className="flex justify-between items-center py-2">
+              <span className="text-xl font-bold">{selectedItem?.price} ₽</span>
+              {selectedItem && (
+                <Button
+                  onClick={() => handleAddToCart(selectedItem)}
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  В корзину
+                </Button>
+              )}
+            </div>
+
             <div className="flex justify-between mt-4">
-              <Button onClick={handlePrevItem} disabled={isFirst}>←</Button>
-              <Button onClick={handleNextItem} disabled={isLast}>→</Button>
+              <Button variant="outline" onClick={handlePrevItem} disabled={isFirst}><ChevronLeft className="w-5 h-5" /></Button>
+              <Button variant="outline" onClick={handleNextItem} disabled={isLast}><ChevronRight className="w-5 h-5" /></Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Cart */}
+      <Cart cart={cart} subdomain={data.subdomain || ''} restaurantName={data.name} restaurantId={data.id} />
     </div>
   )
 }
