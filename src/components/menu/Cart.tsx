@@ -250,8 +250,11 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
         if (form.deliveryMethod === 'pickup' && discountPercent > 0) {
             deliveryNotes.push(`Скидка на самовывоз: ${discountPercent}% (${formatCurrency(discountAmount)})`)
         }
-        if (form.deliveryTime === 'asap' && methodSettings.asap_time_hint) {
-            deliveryNotes.push(`Готовность: ${methodSettings.asap_time_hint}`)
+        if (form.deliveryTime === 'asap') {
+            deliveryNotes.push(`Время получения: как можно скорее${methodSettings.asap_time_hint ? ` (${methodSettings.asap_time_hint})` : ''}`)
+        }
+        if (form.deliveryTime === 'scheduled' && form.scheduledTime) {
+            deliveryNotes.push(`Время получения: ${form.scheduledTime}`)
         }
 
         setSubmitting(true)
@@ -311,6 +314,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const hasTimeOption = methodSettings.allow_asap || methodSettings.allow_scheduled
     const availablePayments = methodSettings.payment_methods || []
     const canProceedToCheckout = methodSettings.enabled && hasTimeOption && cart.items.length > 0
+    const canGoToCheckout = canProceedToCheckout && timeIsValid
     const canSubmitOrder = Boolean(
         methodSettings.enabled &&
         trimmedName &&
@@ -327,6 +331,15 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const isPickupDiscounted = form.deliveryMethod === 'pickup' && discountPercent > 0
     const confirmationDiscount = lastOrderDiscount || discountAmount
     const fieldErrorClass = (field: keyof typeof errors) => errors[field] ? 'border-red-500 focus-visible:ring-red-500' : ''
+
+    const handleGoToCheckout = () => {
+        if (!timeIsValid) {
+            setErrors(prev => ({ ...prev, scheduledTime: !form.scheduledTime && form.deliveryTime === 'scheduled' ? 'Укажите время получения' : prev.scheduledTime }))
+            toast.error('Укажите время получения')
+            return
+        }
+        setDeliveryStep('checkout')
+    }
 
     return (
         <>
@@ -511,8 +524,8 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                         <Button
                                             className="w-full"
                                             size="lg"
-                                            onClick={() => setDeliveryStep('checkout')}
-                                            disabled={!canProceedToCheckout}
+                                            onClick={handleGoToCheckout}
+                                            disabled={!canGoToCheckout}
                                         >
                                             Далее <ArrowRight className="ml-2 h-4 w-4" />
                                         </Button>

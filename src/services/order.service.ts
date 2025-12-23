@@ -29,6 +29,15 @@ export interface Order {
     comment?: string
 }
 
+export interface Notification {
+    id: number
+    type: 'new_order' | 'status_change' | 'canceled'
+    order_number: string
+    message: string
+    created_at: string
+    read: boolean
+}
+
 export interface OrderFilters {
     status?: string
     search?: string
@@ -60,7 +69,15 @@ export const orderService = {
         api.post<Order>(`/restaurants/${restaurantId}/orders/${orderId}/cancel`, { reason }),
 
     getNotifications: (restaurantId: string | number) =>
-        api.get<{ notifications: any[] }>(`/restaurants/${restaurantId}/notifications`),
+        api.get<{ notifications: Notification[] }>(`/restaurants/${restaurantId}/notifications`),
+
+    markNotificationRead: (restaurantId: string | number, notificationId: number) =>
+        api.patch(`/restaurants/${restaurantId}/notifications/${notificationId}/read`),
+
+    markAllNotificationsRead: (restaurantId: string | number, ids?: number[]) =>
+        api.post<{ updated: number }>(`/restaurants/${restaurantId}/notifications/read`, {
+            notification_ids: ids,
+        }),
 
     createOrder: (restaurantId: string | number, data: any) =>
         api.post<{ order_id: number; order_number: string }>(`/restaurants/${restaurantId}/orders`, data)

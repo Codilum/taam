@@ -418,6 +418,9 @@ def init_db():
             currency TEXT DEFAULT 'RUB',
             items TEXT NOT NULL,
             comment TEXT,
+            ready_at TEXT,
+            courier_at TEXT,
+            delivered_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (restaurant_id) REFERENCES restaurants (id) ON DELETE CASCADE
@@ -436,6 +439,11 @@ def init_db():
             FOREIGN KEY (restaurant_id) REFERENCES restaurants (id) ON DELETE CASCADE
         )
     ''')
+    c.execute("PRAGMA table_info(orders)")
+    order_columns = [row[1] for row in c.fetchall()]
+    for column_name in ["ready_at", "courier_at", "delivered_at"]:
+        if column_name not in order_columns:
+            c.execute(f"ALTER TABLE orders ADD COLUMN {column_name} TEXT")
     c.execute("PRAGMA table_info(subscription_plans)")
     subscription_columns = [row[1] for row in c.fetchall()]
     if "is_hidden" not in subscription_columns:
@@ -1139,6 +1147,10 @@ class OrderStatusUpdate(BaseModel):
 
 class OrderCancelRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class NotificationReadRequest(BaseModel):
+    notification_ids: Optional[List[int]] = None
 
 
 def normalize_order_items(items: list[dict]) -> list[dict]:
@@ -2181,7 +2193,35 @@ def update_delivery_settings(restaurant_id: int, req: DeliverySettingsUpdate, cu
 def create_guest_order(restaurant_id: int, req: OrderCreate):
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
-    
+
+    customer_name = (req.customer_name or "").strip()
+    customer_phone = (req.customer_phone or "").strip()
+    delivery_method = (req.delivery_method or "").strip()
+    delivery_address = (req.delivery_address or "").strip() if req.delivery_address else ""
+    delivery_zone = (req.delivery_zone or "").strip() if req.delivery_zone else None
+    delivery_time = (req.delivery_time or "").strip()
+    payment_method = (req.payment_method or "").strip()
+
+    if not customer_name or not customer_phone or not payment_method:
+        conn.close()
+        raise HTTPException(400, "Имя, телефон и способ оплаты обязательны")
+
+    if delivery_method not in ("delivery", "pickup"):
+        conn.close()
+        raise HTTPException(400, "Некорректный способ доставки")
+
+    if delivery_method == "delivery" and not delivery_address:
+        conn.close()
+        raise HTTPException(400, "Укажите адрес доставки")
+
+    if not delivery_time:
+        conn.close()
+        raise HTTPException(400, "Укажите время получения заказа")
+
+    if not req.items:
+        conn.close()
+        raise HTTPException(400, "Добавьте позиции в заказ")
+
     # Check if restaurant exists
     c.execute("SELECT name, currency FROM restaurants WHERE id = ?", (restaurant_id,))
     rest_row = c.fetchone()
@@ -2211,9 +2251,9 @@ def create_guest_order(restaurant_id: int, req: OrderCreate):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            restaurant_id, order_number, 'pending', req.customer_name, req.customer_phone,
-            req.delivery_method, req.delivery_address, req.delivery_zone, req.delivery_time,
-            req.payment_method, amount, delivery_cost, currency or 'RUB',
+            restaurant_id, order_number, 'pending', customer_name, customer_phone,
+            delivery_method, delivery_address or None, delivery_zone, delivery_time,
+            payment_method, amount, delivery_cost, currency or 'RUB',
             json.dumps([item.model_dump() for item in req.items]), req.comment,
             now_str, now_str
         ),
@@ -2281,6 +2321,7 @@ def get_restaurant_orders(
             order["delivery_cost"] = float(order.get("delivery_cost") or 0)
         except (TypeError, ValueError):
             order["delivery_cost"] = 0.0
+        order["number"] = order.get("order_number") or str(order.get("id"))
         orders.append(order)
     
     conn.close()
@@ -2319,6 +2360,7 @@ def get_active_orders(restaurant_id: int, current_user: dict = Depends(get_curre
             order["delivery_cost"] = float(order.get("delivery_cost") or 0)
         except (TypeError, ValueError):
             order["delivery_cost"] = 0.0
+        order["number"] = order.get("order_number") or str(order.get("id"))
         orders.append(order)
     
     conn.close()
@@ -2337,10 +2379,28 @@ def update_order_status(restaurant_id: int, order_id: int, req: OrderStatusUpdat
         raise HTTPException(404, "Заведение не найдено")
     
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute(
-        "UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND restaurant_id = ?",
-        (req.status, now_str, order_id, restaurant_id)
-    )
+    set_clauses = ["status = ?", "updated_at = ?"]
+    params: list = [req.status, now_str]
+
+    if req.status == "ready":
+        set_clauses.append("ready_at = COALESCE(ready_at, ?)")
+        params.append(now_str)
+    if req.status == "courier":
+        set_clauses.append("courier_at = COALESCE(courier_at, ?)")
+        params.append(now_str)
+        set_clauses.append("ready_at = COALESCE(ready_at, ?)")
+        params.append(now_str)
+    if req.status == "delivered":
+        set_clauses.append("delivered_at = COALESCE(delivered_at, ?)")
+        params.append(now_str)
+        set_clauses.append("courier_at = COALESCE(courier_at, ?)")
+        params.append(now_str)
+        set_clauses.append("ready_at = COALESCE(ready_at, ?)")
+        params.append(now_str)
+
+    query = f"UPDATE orders SET {', '.join(set_clauses)} WHERE id = ? AND restaurant_id = ?"
+    params.extend([order_id, restaurant_id])
+    c.execute(query, tuple(params))
     
     if c.rowcount == 0:
         conn.close()
@@ -2369,22 +2429,26 @@ def get_dashboard_stats(
     # Date filter
     date_filter = ""
     params = [restaurant_id]
+    period_map = {
+        "day": 1,
+        "week": 7,
+        "month": 30,
+        "year": 365
+    }
+    try:
+        days = int(period)
+    except ValueError:
+        days = period_map.get(period.lower(), 30)
+
+    days = max(days, 1)
+
+    start_date: datetime | None = None
     if period != "all":
-        # Map named periods or use numeric string
-        period_map = {
-            "day": 1,
-            "week": 7,
-            "month": 30,
-            "year": 365
-        }
-        try:
-            days = int(period)
-        except ValueError:
-            days = period_map.get(period.lower(), 7) # Default to 7 if invalid
-            
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        start_date = datetime.now() - timedelta(days=days - 1)
         date_filter = " AND created_at >= ?"
-        params.append(start_date)
+        params.append(start_date.strftime("%Y-%m-%d %H:%M:%S"))
+    else:
+        start_date = datetime.now() - timedelta(days=days - 1)
     
     # 1. Basic metrics (total orders, revenue, avg check)
     c.execute(
@@ -2482,16 +2546,61 @@ def get_dashboard_stats(
         tuple(params)
     )
     chart_rows = c.fetchall()
-    chart_data = [
-        {"date": day, "revenue": (revenue or 0.0), "orders": orders}
-        for day, revenue, orders in chart_rows
+    chart_map = {day: {"revenue": (revenue or 0.0), "orders": orders or 0} for day, revenue, orders in chart_rows}
+
+    filled_chart: list[dict] = []
+    start_point = start_date or datetime.now()
+    for offset in range(days):
+        day_value = (start_point + timedelta(days=offset)).strftime("%Y-%m-%d")
+        entry = chart_map.get(day_value, {"revenue": 0.0, "orders": 0})
+        filled_chart.append({"date": day_value, **entry})
+
+    chart_data = filled_chart if filled_chart else [
+        {"date": datetime.now().strftime("%Y-%m-%d"), "revenue": 0.0, "orders": 0}
     ]
+
+    # Timing stats
+    def parse_dt(value: str | None):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    c.execute(
+        f"SELECT created_at, ready_at, courier_at, delivered_at FROM orders WHERE restaurant_id = ? {date_filter} AND status != 'canceled'",
+        tuple(params)
+    )
+    processing_times: list[float] = []
+    delivery_times: list[float] = []
+
+    for created_at, ready_at, courier_at, delivered_at in c.fetchall():
+        created_dt = parse_dt(created_at)
+        ready_dt = parse_dt(ready_at)
+        courier_dt = parse_dt(courier_at)
+        delivered_dt = parse_dt(delivered_at)
+
+        dispatch_point = courier_dt or ready_dt or delivered_dt
+        if created_dt and dispatch_point:
+            processing_times.append((dispatch_point - created_dt).total_seconds() / 60)
+
+        if delivered_dt:
+            start_delivery = courier_dt or ready_dt or created_dt
+            if start_delivery:
+                delivery_times.append((delivered_dt - start_delivery).total_seconds() / 60)
+
+    def avg_minutes(values: list[float]) -> float:
+        return round(sum(values) / len(values), 2) if values else 0.0
 
     # Normalize status keys to include zeros for missing statuses
     all_statuses = ['pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled']
     orders_by_status = {status: orders_by_status.get(status, 0) for status in all_statuses}
 
     conn.close()
+
+    dispatch_avg = avg_minutes(processing_times)
+    delivery_avg = avg_minutes(delivery_times)
 
     return {
         "total_orders": total_orders,
@@ -2501,8 +2610,8 @@ def get_dashboard_stats(
         "sales_by_item": sorted_items[:10],
         "sales_by_category": sorted_categories[:10],
         "chart_data": chart_data,
-        "delivery_time_avg": 0, # Not tracked yet
-        "dispatch_time_avg": 0  # Not tracked yet
+        "delivery_time_avg": delivery_avg,
+        "dispatch_time_avg": dispatch_avg
     }
 
 
@@ -2522,14 +2631,69 @@ def get_restaurant_notifications(restaurant_id: int, current_user: dict = Depend
         (restaurant_id,)
     )
     rows = c.fetchall()
-    
+
     notifications = []
     columns = [desc[0] for desc in c.description]
     for row in rows:
-        notifications.append(dict(zip(columns, row)))
-    
+        notif = dict(zip(columns, row))
+        notif["read"] = bool(notif.get("read"))
+        notifications.append(notif)
+
     conn.close()
     return {"notifications": notifications}
+
+
+@app.patch("/api/restaurants/{restaurant_id}/notifications/{notification_id}/read")
+def mark_notification_read(restaurant_id: int, notification_id: int, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+
+    c.execute(
+        "UPDATE notifications SET read = 1 WHERE restaurant_id = ? AND id = ?",
+        (restaurant_id, notification_id)
+    )
+
+    if c.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "Уведомление не найдено")
+
+    conn.commit()
+    conn.close()
+    return {"message": "Уведомление отмечено прочитанным"}
+
+
+@app.post("/api/restaurants/{restaurant_id}/notifications/read")
+def mark_notifications_read(restaurant_id: int, req: NotificationReadRequest, current_user: dict = Depends(get_current_user)):
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT id FROM restaurants WHERE id = ? AND owner_email = ?", (restaurant_id, current_user["email"]))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(404, "Заведение не найдено")
+
+    params: list = [restaurant_id]
+    query = "UPDATE notifications SET read = 1 WHERE restaurant_id = ?"
+
+    if req.notification_ids:
+        placeholders = ",".join(["?"] * len(req.notification_ids))
+        query += f" AND id IN ({placeholders})"
+        params.extend(req.notification_ids)
+
+    c.execute(query, tuple(params))
+    conn.commit()
+    affected = c.rowcount
+    conn.close()
+
+    if affected == 0:
+        raise HTTPException(404, "Уведомления не найдены")
+
+    return {"updated": affected}
 
 
 @app.post("/api/restaurants/{restaurant_id}/orders/{order_id}/cancel")
