@@ -248,6 +248,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   }, [data?.address, data?.city]);
 
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const itemRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const menuHeaderRef = useRef<HTMLDivElement>(null);
   const categoriesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -424,6 +425,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     setSelectedItem(item);
     setCurrentItemIndex(index);
     setCurrentCategoryId(categoryId);
+    setActiveCat(categoryId);
   };
 
   const handleNextItem = () => {
@@ -438,6 +440,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       setSelectedItem(nextCat.items[0]);
       setCurrentItemIndex(0);
       setCurrentCategoryId(nextCat.id);
+      setActiveCat(nextCat.id);
     }
   };
 
@@ -453,6 +456,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       setSelectedItem(prevCat.items[prevCat.items.length - 1]);
       setCurrentItemIndex(prevCat.items.length - 1);
       setCurrentCategoryId(prevCat.id);
+      setActiveCat(prevCat.id);
     }
   };
 
@@ -545,6 +549,18 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   }
 
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    const target = itemRefs.current[selectedItem.id];
+    if (target) {
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const offset = headerHeight + 24;
+      const top = window.scrollY + target.getBoundingClientRect().top - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  }, [selectedItem]);
 
   return (
     <div className="bg-gray-100 min-h-screen">
@@ -656,6 +672,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     return (
                       <div
                         key={item.id}
+                        ref={el => { itemRefs.current[item.id] = el; }}
                         onClick={() => handleItemClick(item, idx, cat.id)}
                         className={cn("flex flex-col rounded-xl overflow-hidden shadow-sm border border-transparent hover:border-black transition-all cursor-pointer", qty > 0 && "border-black")}
                       >
