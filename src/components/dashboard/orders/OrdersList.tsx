@@ -42,6 +42,11 @@ const STATUS_COLORS: Record<string, string> = {
     canceled: "bg-red-100 text-red-800"
 }
 
+const normalizeOrderNumber = (order: Order & { order_number?: string }) => ({
+    ...order,
+    number: order.number || order.order_number || String(order.id)
+})
+
 function formatDate(dateStr: string): string {
     const date = new Date(dateStr.replace(" ", "T"))
     return date.toLocaleString("ru-RU", {
@@ -76,18 +81,19 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
     const loadOrders = useCallback(async () => {
         if (!activeTeam) return
         setLoading(true)
-        try {
-            const filters = {
-                status: statusFilter !== "all" ? statusFilter : undefined,
-                search: searchQuery || undefined
+            try {
+                const filters = {
+                    status: statusFilter !== "all" ? statusFilter : undefined,
+                    search: searchQuery || undefined
+                }
+                const data = await orderService.getOrders(activeTeam, filters)
+                const normalized = (data.orders || []).map(normalizeOrderNumber)
+                setOrders(normalized)
+            } catch (error: any) {
+                showErrorToast(error.detail || "Не удалось загрузить заказы")
+            } finally {
+                setLoading(false)
             }
-            const data = await orderService.getOrders(activeTeam, filters)
-            setOrders(data.orders || [])
-        } catch (error: any) {
-            showErrorToast(error.detail || "Не удалось загрузить заказы")
-        } finally {
-            setLoading(false)
-        }
     }, [activeTeam, statusFilter, searchQuery])
 
     useEffect(() => {

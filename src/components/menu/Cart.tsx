@@ -110,6 +110,20 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const methodSettings = deliverySettings[form.deliveryMethod]
 
     useEffect(() => {
+        if (!open) {
+            setDeliveryStep('info')
+            setActiveTab('list')
+        }
+    }, [open])
+
+    useEffect(() => {
+        if (activeTab === 'delivery' && deliveryStep !== 'confirmation') {
+            setDeliveryStep('info')
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab])
+
+    useEffect(() => {
         async function loadDeliverySettings() {
             try {
                 const restaurant = await restaurantService.getBySubdomain(subdomain)
@@ -498,6 +512,36 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                         >
                                             <ArrowLeft className="mr-2 h-4 w-4" /> Назад
                                         </Button>
+
+                                        <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-semibold text-base">
+                                                    {form.deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}
+                                                </span>
+                                                {isPickupDiscounted && (
+                                                    <Badge variant="secondary">Скидка {discountPercent}%</Badge>
+                                                )}
+                                            </div>
+                                            {methodSettings.message && (
+                                                <p className="text-muted-foreground leading-snug">{methodSettings.message}</p>
+                                            )}
+                                            <div className="flex justify-between">
+                                                <span>Время получения</span>
+                                                <span className="font-medium">{timeLabel}</span>
+                                            </div>
+                                            {form.deliveryMethod === 'delivery' && methodSettings.cost_info && (
+                                                <div className="flex justify-between">
+                                                    <span>Доставка</span>
+                                                    <span className="font-medium">{methodSettings.cost_info}</span>
+                                                </div>
+                                            )}
+                                            {isPickupDiscounted && (
+                                                <div className="flex justify-between text-green-700 dark:text-green-500">
+                                                    <span>Скидка за самовывоз</span>
+                                                    <span>-{formatCurrency(discountAmount)}</span>
+                                                </div>
+                                            )}
+                                        </div>
 
                                         <div className="space-y-4">
                                             <div className="space-y-2">

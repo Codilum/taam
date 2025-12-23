@@ -11,6 +11,7 @@ export interface OrderItem {
 export interface Order {
     id: number
     number: string
+    order_number?: string
     status: 'pending' | 'cooking' | 'ready' | 'courier' | 'delivered' | 'canceled'
     amount: number
     currency: string
