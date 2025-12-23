@@ -95,6 +95,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const [lastOrderTotal, setLastOrderTotal] = useState<number | null>(null)
     const [lastOrderDiscount, setLastOrderDiscount] = useState<number>(0)
     const [deliverySettings, setDeliverySettings] = useState<DeliverySettingsData>(defaultDeliverySettings)
+    const [errors, setErrors] = useState<{ name?: string; phone?: string; address?: string; scheduledTime?: string }>({})
 
     const [form, setForm] = useState<DeliveryForm>({
         deliveryMethod: 'delivery',
@@ -199,6 +200,8 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
 
             return { ...prev, [field]: value }
         })
+
+        setErrors(prev => ({ ...prev, [field]: undefined }))
     }
 
     const handleSubmitOrder = async () => {
@@ -216,11 +219,25 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
             return
         }
 
-        if (!name || !phone || cart.items.length === 0 || (form.deliveryMethod === 'delivery' && !address) || !timeIsValid) {
+        const nextErrors: typeof errors = {}
+        if (!name) nextErrors.name = 'Введите имя'
+        if (!phone) nextErrors.phone = 'Введите телефон'
+        if (form.deliveryMethod === 'delivery' && !address) nextErrors.address = 'Введите адрес доставки'
+        if (!timeIsValid) nextErrors.scheduledTime = 'Укажите время получения'
+
+        if (!methodSettings.enabled || cart.items.length === 0) {
+            toast.error('Заполните обязательные поля и выберите время доставки')
+            return
+        }
+
+        if (Object.keys(nextErrors).length > 0) {
+            setErrors(nextErrors)
             toast.error('Заполните обязательные поля и выберите время доставки')
             setDeliveryStep('checkout')
             return
         }
+
+        setErrors({})
 
         const discountPercent = form.deliveryMethod === 'pickup' ? methodSettings.discount_percent || 0 : 0
         const discountAmount = Math.round(cart.total * (discountPercent / 100))
@@ -309,6 +326,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const displayedTotal = lastOrderTotal ?? payableTotal
     const isPickupDiscounted = form.deliveryMethod === 'pickup' && discountPercent > 0
     const confirmationDiscount = lastOrderDiscount || discountAmount
+    const fieldErrorClass = (field: keyof typeof errors) => errors[field] ? 'border-red-500 focus-visible:ring-red-500' : ''
 
     return (
         <>
@@ -462,8 +480,10 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                                     type="time"
                                                     value={form.scheduledTime || ''}
                                                     onChange={(e) => handleFormChange('scheduledTime', e.target.value)}
+                                                    className={cn(fieldErrorClass('scheduledTime'))}
                                                 />
                                             )}
+                                            {errors.scheduledTime && <p className="text-xs text-red-500">{errors.scheduledTime}</p>}
                                             <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
                                                 <div className="flex items-center justify-between">
                                                     <span className="font-medium">
@@ -545,37 +565,43 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
 
                                         <div className="space-y-4">
                                             <div className="space-y-2">
-                                                <Label htmlFor="name">Имя *</Label>
-                                                <Input
-                                                    id="name"
-                                                    placeholder="Ваше имя"
-                                                    value={form.name}
-                                                    onChange={(e) => handleFormChange('name', e.target.value)}
+                                            <Label htmlFor="name">Имя *</Label>
+                                            <Input
+                                                id="name"
+                                                placeholder="Ваше имя"
+                                                value={form.name}
+                                                onChange={(e) => handleFormChange('name', e.target.value)}
+                                                className={cn(fieldErrorClass('name'))}
                                                 />
-                                            </div>
+                                            {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
+                                        </div>
 
-                                            <div className="space-y-2">
-                                                <Label htmlFor="phone">Телефон *</Label>
-                                                <Input
-                                                    id="phone"
-                                                    type="tel"
-                                                    placeholder="+7 999 123 45 67"
-                                                    value={form.phone}
-                                                    onChange={(e) => handleFormChange('phone', e.target.value)}
+                                        <div className="space-y-2">
+                                            <Label htmlFor="phone">Телефон *</Label>
+                                            <Input
+                                                id="phone"
+                                                type="tel"
+                                                placeholder="+7 999 123 45 67"
+                                                value={form.phone}
+                                                onChange={(e) => handleFormChange('phone', e.target.value)}
+                                                className={cn(fieldErrorClass('phone'))}
                                                 />
-                                            </div>
+                                            {errors.phone && <p className="text-xs text-red-500">{errors.phone}</p>}
+                                        </div>
 
-                                            {form.deliveryMethod === 'delivery' && (
-                                                <>
-                                                    <div className="space-y-2">
-                                                        <Label htmlFor="address">Адрес доставки *</Label>
-                                                        <Input
-                                                            id="address"
-                                                            placeholder="Улица, дом"
-                                                            value={form.address}
-                                                            onChange={(e) => handleFormChange('address', e.target.value)}
+                                        {form.deliveryMethod === 'delivery' && (
+                                            <>
+                                                <div className="space-y-2">
+                                                    <Label htmlFor="address">Адрес доставки *</Label>
+                                                    <Input
+                                                        id="address"
+                                                        placeholder="Улица, дом"
+                                                        value={form.address}
+                                                        onChange={(e) => handleFormChange('address', e.target.value)}
+                                                        className={cn(fieldErrorClass('address'))}
                                                         />
-                                                    </div>
+                                                    {errors.address && <p className="text-xs text-red-500">{errors.address}</p>}
+                                                </div>
 
                                                     <div className="space-y-2">
                                                         <Label htmlFor="apartment">Квартира/офис</Label>
