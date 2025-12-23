@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { ShoppingCart, Minus, Plus, Trash2, ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -82,6 +82,28 @@ const paymentLabels: Record<DeliveryForm['paymentMethod'], string> = {
     transfer: 'Перевод по номеру',
 }
 
+function formatSchedule(raw?: any): string[] {
+    if (!raw) return []
+
+    try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+        if (Array.isArray(parsed)) {
+            return parsed.map((item) => {
+                const days = item.startDay === item.endDay ? item.startDay : `${item.startDay}–${item.endDay}`
+                const time = item.open && item.close ? `${item.open}–${item.close}` : ''
+                const breaks = item.breakStart && item.breakEnd ? ` (перерыв ${item.breakStart}–${item.breakEnd})` : ''
+                return [days, time].filter(Boolean).join(': ') + breaks
+            }).filter(Boolean)
+        }
+    // eslint-disable-next-line no-empty
+    } catch {}
+
+    if (typeof raw === 'string') {
+        return [raw]
+    }
+    return []
+}
+
 function formatCurrency(amount: number): string {
     return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(amount)
 }
@@ -95,6 +117,8 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const [lastOrderTotal, setLastOrderTotal] = useState<number | null>(null)
     const [lastOrderDiscount, setLastOrderDiscount] = useState<number>(0)
     const [deliverySettings, setDeliverySettings] = useState<DeliverySettingsData>(defaultDeliverySettings)
+    const [deliveryHours, setDeliveryHours] = useState<string[]>([])
+    const [pickupHours, setPickupHours] = useState<string[]>([])
     const [errors, setErrors] = useState<{ name?: string; phone?: string; address?: string; scheduledTime?: string }>({})
 
     const [form, setForm] = useState<DeliveryForm>({
@@ -124,51 +148,59 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab])
 
-    useEffect(() => {
-        async function loadDeliverySettings() {
-            try {
-                const restaurant = await restaurantService.getBySubdomain(subdomain)
-                const rawSettings = restaurant?.delivery_settings
-                let parsedSettings: any = null
+    const loadDeliverySettings = useCallback(async () => {
+        try {
+            const restaurant = await restaurantService.getBySubdomain(subdomain)
+            const rawSettings = restaurant?.delivery_settings
+            let parsedSettings: any = null
 
-                if (rawSettings) {
-                    try {
-                        parsedSettings = typeof rawSettings === 'string' ? JSON.parse(rawSettings) : rawSettings
-                    } catch (error) {
-                        console.error('Не удалось разобрать delivery_settings', error)
-                    }
+            if (rawSettings) {
+                try {
+                    parsedSettings = typeof rawSettings === 'string' ? JSON.parse(rawSettings) : rawSettings
+                } catch (error) {
+                    console.error('Не удалось разобрать delivery_settings', error)
                 }
-
-                const merged: DeliverySettingsData = {
-                    delivery: { ...defaultDeliverySettings.delivery, ...(parsedSettings?.delivery || {}) },
-                    pickup: { ...defaultDeliverySettings.pickup, ...(parsedSettings?.pickup || {}) },
-                }
-
-                setDeliverySettings(merged)
-                setForm(prev => {
-                    const preferredMethod: DeliveryForm['deliveryMethod'] = merged[prev.deliveryMethod].enabled
-                        ? prev.deliveryMethod
-                        : (merged.delivery.enabled ? 'delivery' : 'pickup')
-                    const allowedPayments = merged[preferredMethod].payment_methods || []
-                    const nextPayment = allowedPayments.includes(prev.paymentMethod)
-                        ? prev.paymentMethod
-                        : (allowedPayments[0] as DeliveryForm['paymentMethod'] | undefined) || 'card'
-                    const nextTime = prev.deliveryTime === 'scheduled' && !merged[preferredMethod].allow_scheduled
-                        ? 'asap'
-                        : prev.deliveryTime === 'asap' && !merged[preferredMethod].allow_asap
-                            ? 'scheduled'
-                            : prev.deliveryTime
-
-                    return { ...prev, deliveryMethod: preferredMethod, paymentMethod: nextPayment, deliveryTime: nextTime }
-                })
-            } catch (error) {
-                console.error('Не удалось загрузить способы доставки', error)
-                setDeliverySettings(defaultDeliverySettings)
             }
-        }
 
-        loadDeliverySettings()
+            const merged: DeliverySettingsData = {
+                delivery: { ...defaultDeliverySettings.delivery, ...(parsedSettings?.delivery || {}) },
+                pickup: { ...defaultDeliverySettings.pickup, ...(parsedSettings?.pickup || {}) },
+            }
+
+            setDeliverySettings(merged)
+            setDeliveryHours(formatSchedule(restaurant?.delivery_hours || restaurant?.hours))
+            setPickupHours(formatSchedule(restaurant?.hours))
+            setForm(prev => {
+                const preferredMethod: DeliveryForm['deliveryMethod'] = merged[prev.deliveryMethod].enabled
+                    ? prev.deliveryMethod
+                    : (merged.delivery.enabled ? 'delivery' : 'pickup')
+                const allowedPayments = merged[preferredMethod].payment_methods || []
+                const nextPayment = allowedPayments.includes(prev.paymentMethod)
+                    ? prev.paymentMethod
+                    : (allowedPayments[0] as DeliveryForm['paymentMethod'] | undefined) || 'card'
+                const nextTime = prev.deliveryTime === 'scheduled' && !merged[preferredMethod].allow_scheduled
+                    ? 'asap'
+                    : prev.deliveryTime === 'asap' && !merged[preferredMethod].allow_asap
+                        ? 'scheduled'
+                        : prev.deliveryTime
+
+                return { ...prev, deliveryMethod: preferredMethod, paymentMethod: nextPayment, deliveryTime: nextTime }
+            })
+        } catch (error) {
+            console.error('Не удалось загрузить способы доставки', error)
+            setDeliverySettings(defaultDeliverySettings)
+        }
     }, [subdomain])
+
+    useEffect(() => {
+        loadDeliverySettings()
+    }, [loadDeliverySettings])
+
+    useEffect(() => {
+        if (open) {
+            loadDeliverySettings()
+        }
+    }, [open, loadDeliverySettings])
 
     const handleFormChange = (field: keyof DeliveryForm, value: string) => {
         setForm(prev => {
@@ -331,6 +363,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const isPickupDiscounted = form.deliveryMethod === 'pickup' && discountPercent > 0
     const confirmationDiscount = lastOrderDiscount || discountAmount
     const fieldErrorClass = (field: keyof typeof errors) => errors[field] ? 'border-red-500 focus-visible:ring-red-500' : ''
+    const activeHours = form.deliveryMethod === 'delivery' ? deliveryHours : pickupHours
 
     const handleGoToCheckout = () => {
         if (!timeIsValid) {
@@ -481,7 +514,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                             >
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
                                                     <RadioGroupItem value="asap" id="asap" disabled={!methodSettings.allow_asap} />
-                                                    <Label htmlFor="asap" className="cursor-pointer">Ближайшее</Label>
+                                                    <Label htmlFor="asap" className="cursor-pointer">Как можно скорее</Label>
                                                 </div>
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
                                                     <RadioGroupItem value="scheduled" id="scheduled" disabled={!methodSettings.allow_scheduled} />
@@ -506,14 +539,24 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                                         <Badge variant="secondary">Скидка {discountPercent}%</Badge>
                                                     )}
                                                 </div>
+                                                {activeHours.length > 0 && (
+                                                    <div className="space-y-1">
+                                                        <p className="text-[13px] font-medium">Время работы</p>
+                                                        <ul className="list-disc list-inside space-y-0.5 text-muted-foreground">
+                                                            {activeHours.map((item, idx) => (
+                                                                <li key={idx}>{item}</li>
+                                                            ))}
+                                                        </ul>
+                                                    </div>
+                                                )}
                                                 {methodSettings.message && (
                                                     <p className="text-muted-foreground leading-snug">{methodSettings.message}</p>
                                                 )}
                                                 {form.deliveryMethod === 'delivery' && methodSettings.cost_info && (
-                                                    <p className="text-muted-foreground leading-snug">Стоимость: {methodSettings.cost_info}</p>
+                                                    <p className="text-muted-foreground leading-snug">Стоимость доставки: {methodSettings.cost_info}</p>
                                                 )}
                                                 {form.deliveryMethod === 'pickup' && methodSettings.asap_time_hint && form.deliveryTime === 'asap' && (
-                                                    <p className="text-muted-foreground leading-snug">Готовность: {methodSettings.asap_time_hint}</p>
+                                                    <p className="text-muted-foreground leading-snug">Время приготовления: {methodSettings.asap_time_hint}</p>
                                                 )}
                                                 <p className="text-muted-foreground leading-snug">Время: {timeLabel}</p>
                                             </div>
