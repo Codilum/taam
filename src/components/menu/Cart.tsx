@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ShoppingCart, Minus, Plus, Trash2, ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { orderService } from "@/services"
+import { orderService, restaurantService } from "@/services"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
@@ -36,7 +36,50 @@ interface DeliveryForm {
     address: string
     apartment: string
     comment: string
-    paymentMethod: 'cash' | 'card' | 'online'
+    paymentMethod: 'cash' | 'card' | 'online' | 'transfer'
+}
+
+interface DeliveryMethodSettings {
+    enabled: boolean
+    message: string
+    payment_methods: string[]
+    allow_asap: boolean
+    allow_scheduled: boolean
+    discount_percent?: number
+    asap_time_hint?: string
+    cost_info?: string
+}
+
+interface DeliverySettingsData {
+    delivery: DeliveryMethodSettings
+    pickup: DeliveryMethodSettings
+}
+
+const defaultDeliverySettings: DeliverySettingsData = {
+    delivery: {
+        enabled: true,
+        message: "",
+        payment_methods: ["cash", "card", "online", "transfer"],
+        allow_asap: true,
+        allow_scheduled: true,
+        cost_info: "",
+    },
+    pickup: {
+        enabled: true,
+        message: "",
+        payment_methods: ["cash", "card", "online", "transfer"],
+        allow_asap: true,
+        allow_scheduled: true,
+        discount_percent: 0,
+        asap_time_hint: "",
+    },
+}
+
+const paymentLabels: Record<DeliveryForm['paymentMethod'], string> = {
+    card: 'Картой при получении',
+    cash: 'Наличными',
+    online: 'Онлайн',
+    transfer: 'Перевод по номеру',
 }
 
 function formatCurrency(amount: number): string {
@@ -49,6 +92,9 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
     const [deliveryStep, setDeliveryStep] = useState<DeliveryStep>('info')
     const [submitting, setSubmitting] = useState(false)
     const [orderNumber, setOrderNumber] = useState<string | null>(null)
+    const [lastOrderTotal, setLastOrderTotal] = useState<number | null>(null)
+    const [lastOrderDiscount, setLastOrderDiscount] = useState<number>(0)
+    const [deliverySettings, setDeliverySettings] = useState<DeliverySettingsData>(defaultDeliverySettings)
 
     const [form, setForm] = useState<DeliveryForm>({
         deliveryMethod: 'delivery',
@@ -61,25 +107,137 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
         paymentMethod: 'card'
     })
 
+    const methodSettings = deliverySettings[form.deliveryMethod]
+
+    useEffect(() => {
+        async function loadDeliverySettings() {
+            try {
+                const restaurant = await restaurantService.getBySubdomain(subdomain)
+                const rawSettings = restaurant?.delivery_settings
+                let parsedSettings: any = null
+
+                if (rawSettings) {
+                    try {
+                        parsedSettings = typeof rawSettings === 'string' ? JSON.parse(rawSettings) : rawSettings
+                    } catch (error) {
+                        console.error('Не удалось разобрать delivery_settings', error)
+                    }
+                }
+
+                const merged: DeliverySettingsData = {
+                    delivery: { ...defaultDeliverySettings.delivery, ...(parsedSettings?.delivery || {}) },
+                    pickup: { ...defaultDeliverySettings.pickup, ...(parsedSettings?.pickup || {}) },
+                }
+
+                setDeliverySettings(merged)
+                setForm(prev => {
+                    const preferredMethod: DeliveryForm['deliveryMethod'] = merged[prev.deliveryMethod].enabled
+                        ? prev.deliveryMethod
+                        : (merged.delivery.enabled ? 'delivery' : 'pickup')
+                    const allowedPayments = merged[preferredMethod].payment_methods || []
+                    const nextPayment = allowedPayments.includes(prev.paymentMethod)
+                        ? prev.paymentMethod
+                        : (allowedPayments[0] as DeliveryForm['paymentMethod'] | undefined) || 'card'
+                    const nextTime = prev.deliveryTime === 'scheduled' && !merged[preferredMethod].allow_scheduled
+                        ? 'asap'
+                        : prev.deliveryTime === 'asap' && !merged[preferredMethod].allow_asap
+                            ? 'scheduled'
+                            : prev.deliveryTime
+
+                    return { ...prev, deliveryMethod: preferredMethod, paymentMethod: nextPayment, deliveryTime: nextTime }
+                })
+            } catch (error) {
+                console.error('Не удалось загрузить способы доставки', error)
+                setDeliverySettings(defaultDeliverySettings)
+            }
+        }
+
+        loadDeliverySettings()
+    }, [subdomain])
+
     const handleFormChange = (field: keyof DeliveryForm, value: string) => {
-        setForm(prev => ({ ...prev, [field]: value }))
+        setForm(prev => {
+            if (field === 'deliveryMethod') {
+                const method = value as DeliveryForm['deliveryMethod']
+                const allowedPayments = deliverySettings[method].payment_methods || []
+                const nextPayment = allowedPayments.includes(prev.paymentMethod)
+                    ? prev.paymentMethod
+                    : (allowedPayments[0] as DeliveryForm['paymentMethod'] | undefined) || 'card'
+                const nextTime = prev.deliveryTime === 'scheduled' && !deliverySettings[method].allow_scheduled
+                    ? 'asap'
+                    : prev.deliveryTime === 'asap' && !deliverySettings[method].allow_asap
+                        ? 'scheduled'
+                        : prev.deliveryTime
+
+                return { ...prev, deliveryMethod: method, paymentMethod: nextPayment, deliveryTime: nextTime }
+            }
+
+            if (field === 'deliveryTime') {
+                const time = value as DeliveryForm['deliveryTime']
+                const nextScheduled = time === 'scheduled' ? prev.scheduledTime : ''
+                return { ...prev, deliveryTime: time, scheduledTime: nextScheduled }
+            }
+
+            if (field === 'paymentMethod') {
+                const payment = value as DeliveryForm['paymentMethod']
+                return { ...prev, paymentMethod: payment }
+            }
+
+            return { ...prev, [field]: value }
+        })
     }
 
     const handleSubmitOrder = async () => {
         if (!restaurantId) return
+
+        const name = form.name.trim()
+        const phone = form.phone.trim()
+        const address = form.address.trim()
+        const apartment = form.apartment.trim()
+        const deliveryAddress = form.deliveryMethod === 'delivery' ? [address, apartment].filter(Boolean).join(', ') : null
+        const timeIsValid = form.deliveryTime === 'asap' ? methodSettings.allow_asap : (methodSettings.allow_scheduled && !!form.scheduledTime)
+
+        if (!methodSettings.enabled) {
+            toast.error('Этот способ сейчас недоступен')
+            return
+        }
+
+        if (!name || !phone || cart.items.length === 0 || (form.deliveryMethod === 'delivery' && !address) || !timeIsValid) {
+            toast.error('Заполните обязательные поля и выберите время доставки')
+            setDeliveryStep('checkout')
+            return
+        }
+
+        const discountPercent = form.deliveryMethod === 'pickup' ? methodSettings.discount_percent || 0 : 0
+        const discountAmount = Math.round(cart.total * (discountPercent / 100))
+        const payableTotal = Math.max(cart.total - discountAmount, 0)
+        const deliveryNotes: string[] = []
+
+        if (form.deliveryMethod === 'delivery' && methodSettings.cost_info) {
+            deliveryNotes.push(`Доставка: ${methodSettings.cost_info}`)
+        }
+        if (form.deliveryMethod === 'pickup' && discountPercent > 0) {
+            deliveryNotes.push(`Скидка на самовывоз: ${discountPercent}% (${formatCurrency(discountAmount)})`)
+        }
+        if (form.deliveryTime === 'asap' && methodSettings.asap_time_hint) {
+            deliveryNotes.push(`Готовность: ${methodSettings.asap_time_hint}`)
+        }
+
         setSubmitting(true)
         try {
             const res = await orderService.createOrder(restaurantId, {
-                customer_name: form.name,
-                customer_phone: form.phone,
+                customer_name: name,
+                customer_phone: phone,
                 delivery_method: form.deliveryMethod,
-                delivery_address: form.deliveryMethod === 'delivery' ? `${form.address}, ${form.apartment}` : null,
+                delivery_address: deliveryAddress,
                 delivery_zone: null,
                 delivery_time: form.deliveryTime === 'asap' ? 'ASAP' : form.scheduledTime,
                 payment_method: form.paymentMethod,
                 items: cart.items.map(i => ({ id: i.id, name: i.name, quantity: i.quantity, price: i.price })),
-                comment: form.comment
+                comment: [form.comment, deliveryNotes.join('; ')].filter(Boolean).join('\n'),
             })
+            setLastOrderDiscount(discountAmount)
+            setLastOrderTotal(payableTotal)
             setOrderNumber(res.order_number)
             setDeliveryStep('confirmation')
             cart.clearCart()
@@ -96,6 +254,8 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
         setDeliveryStep('info')
         setActiveTab('list')
         setOrderNumber(null)
+        setLastOrderTotal(null)
+        setLastOrderDiscount(0)
         setForm({
             deliveryMethod: 'delivery',
             deliveryTime: 'asap',
@@ -108,8 +268,33 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
         })
     }
 
-    const canProceedToCheckout = form.deliveryMethod !== undefined
-    const canSubmitOrder = form.name && form.phone && (form.deliveryMethod === 'pickup' || form.address)
+    const trimmedName = form.name.trim()
+    const trimmedPhone = form.phone.trim()
+    const trimmedAddress = form.address.trim()
+    const discountPercent = form.deliveryMethod === 'pickup' ? methodSettings.discount_percent || 0 : 0
+    const discountAmount = Math.round(cart.total * (discountPercent / 100))
+    const payableTotal = Math.max(cart.total - discountAmount, 0)
+    const timeIsValid = form.deliveryTime === 'asap'
+        ? methodSettings.allow_asap
+        : (methodSettings.allow_scheduled && !!form.scheduledTime)
+    const hasTimeOption = methodSettings.allow_asap || methodSettings.allow_scheduled
+    const availablePayments = methodSettings.payment_methods || []
+    const canProceedToCheckout = methodSettings.enabled && hasTimeOption && cart.items.length > 0
+    const canSubmitOrder = Boolean(
+        methodSettings.enabled &&
+        trimmedName &&
+        trimmedPhone &&
+        timeIsValid &&
+        cart.items.length > 0 &&
+        availablePayments.length > 0 &&
+        (form.deliveryMethod === 'pickup' || trimmedAddress)
+    )
+    const timeLabel = form.deliveryTime === 'asap'
+        ? (methodSettings.asap_time_hint ? `Как можно скорее (${methodSettings.asap_time_hint})` : 'Как можно скорее')
+        : form.scheduledTime || 'Ко времени'
+    const displayedTotal = lastOrderTotal ?? payableTotal
+    const isPickupDiscounted = form.deliveryMethod === 'pickup' && discountPercent > 0
+    const confirmationDiscount = lastOrderDiscount || discountAmount
 
     return (
         <>
@@ -227,14 +412,14 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                                 onValueChange={(v) => handleFormChange('deliveryMethod', v)}
                                             >
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
-                                                    <RadioGroupItem value="delivery" id="delivery" />
+                                                    <RadioGroupItem value="delivery" id="delivery" disabled={!deliverySettings.delivery.enabled} />
                                                     <Label htmlFor="delivery" className="flex-1 cursor-pointer">
                                                         <span className="font-medium">Доставка</span>
                                                         <p className="text-sm text-muted-foreground">Курьер привезёт заказ</p>
                                                     </Label>
                                                 </div>
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
-                                                    <RadioGroupItem value="pickup" id="pickup" />
+                                                    <RadioGroupItem value="pickup" id="pickup" disabled={!deliverySettings.pickup.enabled} />
                                                     <Label htmlFor="pickup" className="flex-1 cursor-pointer">
                                                         <span className="font-medium">Самовывоз</span>
                                                         <p className="text-sm text-muted-foreground">Заберите сами</p>
@@ -250,11 +435,11 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                                 onValueChange={(v) => handleFormChange('deliveryTime', v)}
                                             >
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
-                                                    <RadioGroupItem value="asap" id="asap" />
+                                                    <RadioGroupItem value="asap" id="asap" disabled={!methodSettings.allow_asap} />
                                                     <Label htmlFor="asap" className="cursor-pointer">Ближайшее</Label>
                                                 </div>
                                                 <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
-                                                    <RadioGroupItem value="scheduled" id="scheduled" />
+                                                    <RadioGroupItem value="scheduled" id="scheduled" disabled={!methodSettings.allow_scheduled} />
                                                     <Label htmlFor="scheduled" className="cursor-pointer">Ко времени</Label>
                                                 </div>
                                             </RadioGroup>
@@ -265,6 +450,26 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                                     onChange={(e) => handleFormChange('scheduledTime', e.target.value)}
                                                 />
                                             )}
+                                            <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="font-medium">
+                                                        {form.deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}
+                                                    </span>
+                                                    {isPickupDiscounted && (
+                                                        <Badge variant="secondary">Скидка {discountPercent}%</Badge>
+                                                    )}
+                                                </div>
+                                                {methodSettings.message && (
+                                                    <p className="text-muted-foreground leading-snug">{methodSettings.message}</p>
+                                                )}
+                                                {form.deliveryMethod === 'delivery' && methodSettings.cost_info && (
+                                                    <p className="text-muted-foreground leading-snug">Стоимость: {methodSettings.cost_info}</p>
+                                                )}
+                                                {form.deliveryMethod === 'pickup' && methodSettings.asap_time_hint && form.deliveryTime === 'asap' && (
+                                                    <p className="text-muted-foreground leading-snug">Готовность: {methodSettings.asap_time_hint}</p>
+                                                )}
+                                                <p className="text-muted-foreground leading-snug">Время: {timeLabel}</p>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -352,23 +557,23 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
 
                                             <div className="space-y-3">
                                                 <Label className="text-base font-semibold">Способ оплаты</Label>
-                                                <RadioGroup
-                                                    value={form.paymentMethod}
-                                                    onValueChange={(v) => handleFormChange('paymentMethod', v)}
-                                                >
-                                                    <div className="flex items-center space-x-3 p-3 border rounded-lg">
-                                                        <RadioGroupItem value="card" id="card" />
-                                                        <Label htmlFor="card" className="cursor-pointer">Картой при получении</Label>
-                                                    </div>
-                                                    <div className="flex items-center space-x-3 p-3 border rounded-lg">
-                                                        <RadioGroupItem value="cash" id="cash" />
-                                                        <Label htmlFor="cash" className="cursor-pointer">Наличными</Label>
-                                                    </div>
-                                                    <div className="flex items-center space-x-3 p-3 border rounded-lg">
-                                                        <RadioGroupItem value="online" id="online" />
-                                                        <Label htmlFor="online" className="cursor-pointer">Онлайн</Label>
-                                                    </div>
-                                                </RadioGroup>
+                                                {availablePayments.length === 0 ? (
+                                                    <p className="text-sm text-muted-foreground">Для выбранного способа нет доступных оплат</p>
+                                                ) : (
+                                                    <RadioGroup
+                                                        value={form.paymentMethod}
+                                                        onValueChange={(v) => handleFormChange('paymentMethod', v)}
+                                                    >
+                                                        {availablePayments.map((method) => (
+                                                            <div key={method} className="flex items-center space-x-3 p-3 border rounded-lg">
+                                                                <RadioGroupItem value={method} id={`pay-${method}`} />
+                                                                <Label htmlFor={`pay-${method}`} className="cursor-pointer">
+                                                                    {paymentLabels[method as DeliveryForm['paymentMethod']] || method}
+                                                                </Label>
+                                                            </div>
+                                                        ))}
+                                                    </RadioGroup>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -376,9 +581,38 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                     <Separator />
 
                                     <div className="py-4 space-y-3">
+                                        <div className="space-y-1 text-sm text-muted-foreground">
+                                            <div className="flex justify-between">
+                                                <span>Способ:</span>
+                                                <span>{form.deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>Время:</span>
+                                                <span>{timeLabel}</span>
+                                            </div>
+                                            {form.deliveryMethod === 'delivery' && methodSettings.cost_info && (
+                                                <div className="flex justify-between">
+                                                    <span>Доставка:</span>
+                                                    <span>{methodSettings.cost_info}</span>
+                                                </div>
+                                            )}
+                                            {isPickupDiscounted && (
+                                                <div className="flex justify-between">
+                                                    <span>Скидка на самовывоз:</span>
+                                                    <span>{discountPercent}%</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <Separator />
+                                        {isPickupDiscounted && (
+                                            <div className="flex justify-between text-sm">
+                                                <span>Скидка</span>
+                                                <span>-{formatCurrency(discountAmount)}</span>
+                                            </div>
+                                        )}
                                         <div className="flex justify-between font-bold">
                                             <span>Итого:</span>
-                                            <span>{formatCurrency(cart.total)}</span>
+                                            <span>{formatCurrency(payableTotal)}</span>
                                         </div>
                                         <Button
                                             className="w-full"
@@ -419,8 +653,20 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                             </div>
                                             <div className="flex justify-between">
                                                 <span className="text-muted-foreground">Время:</span>
-                                                <span>{form.deliveryTime === 'asap' ? 'Ближайшее' : form.scheduledTime}</span>
+                                                <span>{timeLabel}</span>
                                             </div>
+                                            {form.deliveryMethod === 'delivery' && methodSettings.cost_info && (
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Доставка:</span>
+                                                    <span>{methodSettings.cost_info}</span>
+                                                </div>
+                                            )}
+                                            {isPickupDiscounted && confirmationDiscount > 0 && (
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Скидка:</span>
+                                                    <span>-{formatCurrency(confirmationDiscount)}</span>
+                                                </div>
+                                            )}
                                             <div className="flex justify-between">
                                                 <span className="text-muted-foreground">Имя:</span>
                                                 <span>{form.name}</span>
@@ -438,7 +684,7 @@ export default function Cart({ cart, subdomain, restaurantName, restaurantId }: 
                                             <Separator />
                                             <div className="flex justify-between font-bold">
                                                 <span>Сумма:</span>
-                                                <span>{formatCurrency(cart.total)}</span>
+                                                <span>{formatCurrency(displayedTotal)}</span>
                                             </div>
                                         </CardContent>
                                     </Card>

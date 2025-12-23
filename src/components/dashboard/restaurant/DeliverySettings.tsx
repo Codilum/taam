@@ -35,6 +35,8 @@ interface DeliveryMethodSettings {
     allow_asap: boolean;
     allow_scheduled: boolean;
     discount_percent?: number;
+    asap_time_hint?: string;
+    cost_info?: string;
 }
 
 interface DeliverySettingsData {
@@ -46,17 +48,19 @@ const defaultSettings: DeliverySettingsData = {
     delivery: {
         enabled: true,
         message: "",
-        payment_methods: ["cash", "card"],
+        payment_methods: ["cash", "card", "transfer"],
         allow_asap: true,
         allow_scheduled: true,
+        cost_info: "",
     },
     pickup: {
         enabled: true,
         message: "",
-        payment_methods: ["cash", "card"],
+        payment_methods: ["cash", "card", "transfer"],
         allow_asap: true,
         allow_scheduled: true,
         discount_percent: 0,
+        asap_time_hint: "",
     },
 };
 
@@ -324,6 +328,21 @@ export default function DeliverySettings({ activeTeam }: { activeTeam: string })
                                             Картой при получении
                                         </Label>
                                     </div>
+                                    <div className="flex items-center space-x-2">
+                                        <Checkbox
+                                            id="pm-transfer"
+                                            checked={tempSettings.payment_methods.includes("transfer")}
+                                            onCheckedChange={(checked) => {
+                                                const newMethods = checked
+                                                    ? [...tempSettings.payment_methods, "transfer"]
+                                                    : tempSettings.payment_methods.filter(m => m !== "transfer");
+                                                setTempSettings({ ...tempSettings, payment_methods: newMethods });
+                                            }}
+                                        />
+                                        <Label htmlFor="pm-transfer" className="font-normal cursor-pointer">
+                                            Перевод по номеру
+                                        </Label>
+                                    </div>
                                 </div>
                             </div>
 
@@ -357,6 +376,28 @@ export default function DeliverySettings({ activeTeam }: { activeTeam: string })
                                     </div>
                                 </div>
                             </div>
+
+                            {editingMethod === "pickup" && (
+                                <div className="space-y-2">
+                                    <Label>Время приготовления для «как можно скорее»</Label>
+                                    <Input
+                                        placeholder="Например: 15-20 минут"
+                                        value={tempSettings.asap_time_hint || ""}
+                                        onChange={(e) => setTempSettings({ ...tempSettings, asap_time_hint: e.target.value })}
+                                    />
+                                </div>
+                            )}
+
+                            {editingMethod === "delivery" && (
+                                <div className="space-y-2">
+                                    <Label>Информация о стоимости доставки</Label>
+                                    <Textarea
+                                        placeholder="Например: бесплатно от 1500 ₽, внутри КАД — 200 ₽"
+                                        value={tempSettings.cost_info || ""}
+                                        onChange={(e) => setTempSettings({ ...tempSettings, cost_info: e.target.value })}
+                                    />
+                                </div>
+                            )}
 
                             {/* Discount (Pickup only) */}
                             {editingMethod === "pickup" && (

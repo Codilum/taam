@@ -128,7 +128,7 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
     }
 
     return (
-        <div className="flex flex-1 gap-6 p-4 h-[calc(100vh-120px)]">
+        <div className="flex flex-1 flex-col xl:flex-row gap-6 p-4 xl:h-[calc(100vh-120px)]">
             {/* Orders List */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Filters */}
@@ -221,7 +221,7 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
 
             {/* Order Detail Panel */}
             {selectedOrder && (
-                <Card className="w-[420px] shrink-0 flex flex-col overflow-hidden">
+                <Card className="w-full xl:w-[420px] max-w-full xl:shrink-0 flex flex-col overflow-hidden">
                     <CardHeader className="pb-3">
                         <div className="flex items-center justify-between">
                             <CardTitle className="text-xl">Заказ №{selectedOrder.number}</CardTitle>
@@ -231,7 +231,7 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                         </div>
                     </CardHeader>
 
-                    <ScrollArea className="flex-1">
+                    <ScrollArea className="flex-1 max-h-[70vh] xl:max-h-[calc(100vh-240px)]">
                         <CardContent className="space-y-6">
                             {/* Dates */}
                             <div className="space-y-2 text-sm">
