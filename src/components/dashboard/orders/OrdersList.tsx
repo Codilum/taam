@@ -54,8 +54,15 @@ function formatDate(dateStr: string): string {
     })
 }
 
-function formatCurrency(amount: number, currency: string = "RUB"): string {
-    return new Intl.NumberFormat("ru-RU", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount)
+function formatCurrency(amount: number | string, currency: string = "RUB"): string {
+    const value = Number(amount)
+    const safeValue = Number.isFinite(value) ? value : 0
+    return new Intl.NumberFormat("ru-RU", { style: "currency", currency, maximumFractionDigits: 0 }).format(safeValue)
+}
+
+const toNumber = (value: unknown, fallback = 0): number => {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : fallback
 }
 
 export default function OrdersList({ activeTeam }: { activeTeam: string }) {
@@ -331,33 +338,49 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {selectedOrder.items.map((item) => (
-                                            <TableRow key={item.id}>
-                                                <TableCell>{item.name}</TableCell>
-                                                <TableCell className="text-center">{item.quantity}</TableCell>
-                                                <TableCell className="text-right">{formatCurrency(item.price)}</TableCell>
-                                                <TableCell className="text-right">{formatCurrency(item.total)}</TableCell>
-                                            </TableRow>
-                                        ))}
+                                        {selectedOrder.items.map((item) => {
+                                            const price = toNumber(item.price)
+                                            const quantity = toNumber(item.quantity)
+                                            const total = toNumber(item.total, price * quantity)
+
+                                            return (
+                                                <TableRow key={item.id}>
+                                                    <TableCell className="whitespace-normal break-words max-w-[220px]">{item.name}</TableCell>
+                                                    <TableCell className="text-center">{quantity}</TableCell>
+                                                    <TableCell className="text-right">{formatCurrency(price)}</TableCell>
+                                                    <TableCell className="text-right">{formatCurrency(total)}</TableCell>
+                                                </TableRow>
+                                            )
+                                        })}
                                     </TableBody>
                                 </Table>
                             </div>
 
                             {/* Totals */}
                             <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span>Стоимость заказа:</span>
-                                    <span>{formatCurrency(selectedOrder.amount - (selectedOrder.delivery_cost || 0))}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span>Стоимость доставки:</span>
-                                    <span>{formatCurrency(selectedOrder.delivery_cost || 0)}</span>
-                                </div>
-                                <Separator />
-                                <div className="flex justify-between font-bold text-base">
-                                    <span>Итого:</span>
-                                    <span>{formatCurrency(selectedOrder.amount)}</span>
-                                </div>
+                                {(() => {
+                                    const orderAmount = toNumber(selectedOrder.amount)
+                                    const deliveryCost = toNumber(selectedOrder.delivery_cost)
+                                    const itemsCost = Math.max(orderAmount - deliveryCost, 0)
+
+                                    return (
+                                        <>
+                                            <div className="flex justify-between">
+                                                <span>Стоимость заказа:</span>
+                                                <span>{formatCurrency(itemsCost)}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>Стоимость доставки:</span>
+                                                <span>{formatCurrency(deliveryCost)}</span>
+                                            </div>
+                                            <Separator />
+                                            <div className="flex justify-between font-bold text-base">
+                                                <span>Итого:</span>
+                                                <span>{formatCurrency(orderAmount)}</span>
+                                            </div>
+                                        </>
+                                    )
+                                })()}
                             </div>
 
                             {/* Actions */}

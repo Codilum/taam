@@ -1141,6 +1141,25 @@ class OrderCancelRequest(BaseModel):
     reason: Optional[str] = None
 
 
+def normalize_order_items(items: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for item in items or []:
+        try:
+            price = float(item.get("price") or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+
+        try:
+            quantity = int(item.get("quantity") or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+
+        total = price * quantity
+        normalized.append({**item, "price": price, "quantity": quantity, "total": total})
+
+    return normalized
+
+
 class DeliverySettingsUpdate(BaseModel):
     zones: Optional[List[dict]] = None
     min_order_amount: Optional[float] = None
@@ -2253,7 +2272,15 @@ def get_restaurant_orders(
     columns = [desc[0] for desc in c.description]
     for row in rows:
         order = dict(zip(columns, row))
-        order["items"] = json.loads(order["items"])
+        order["items"] = normalize_order_items(json.loads(order["items"]))
+        try:
+            order["amount"] = float(order.get("amount") or 0)
+        except (TypeError, ValueError):
+            order["amount"] = 0.0
+        try:
+            order["delivery_cost"] = float(order.get("delivery_cost") or 0)
+        except (TypeError, ValueError):
+            order["delivery_cost"] = 0.0
         orders.append(order)
     
     conn.close()
@@ -2283,7 +2310,15 @@ def get_active_orders(restaurant_id: int, current_user: dict = Depends(get_curre
     columns = [desc[0] for desc in c.description]
     for row in rows:
         order = dict(zip(columns, row))
-        order["items"] = json.loads(order["items"])
+        order["items"] = normalize_order_items(json.loads(order["items"]))
+        try:
+            order["amount"] = float(order.get("amount") or 0)
+        except (TypeError, ValueError):
+            order["amount"] = 0.0
+        try:
+            order["delivery_cost"] = float(order.get("delivery_cost") or 0)
+        except (TypeError, ValueError):
+            order["delivery_cost"] = 0.0
         orders.append(order)
     
     conn.close()
@@ -2373,25 +2408,66 @@ def get_dashboard_stats(
         tuple(params)
     )
     rows = c.fetchall()
-    
-    sales_by_item = {}
-    
+
+    parsed_items: list[dict] = []
+    unique_item_ids: set[int] = set()
+
     for (items_json,) in rows:
-        items = json.loads(items_json)
+        try:
+            items = normalize_order_items(json.loads(items_json))
+        except json.JSONDecodeError:
+            continue
+
+        parsed_items.extend(items)
         for item in items:
-            item_id = item.get("id")
-            name = item.get("name")
-            qty = item.get("quantity", 0)
-            price = item.get("price", 0)
-            
-            if item_id not in sales_by_item:
-                sales_by_item[item_id] = {"name": name, "quantity": 0, "revenue": 0.0}
-            
-            sales_by_item[item_id]["quantity"] += qty
-            sales_by_item[item_id]["revenue"] += qty * price
-    
-    # Sort and take top items
-    top_items = sorted(sales_by_item.values(), key=lambda x: x["revenue"], reverse=True)[:10]
+            if isinstance(item.get("id"), int):
+                unique_item_ids.add(item["id"])
+
+    item_lookup: dict[int, dict] = {}
+    if unique_item_ids:
+        placeholders = ",".join(["?"] * len(unique_item_ids))
+        c.execute(
+            f"""
+            SELECT mi.id, mi.name, mi.category_id, mc.name
+            FROM menu_items mi
+            LEFT JOIN menu_categories mc ON mi.category_id = mc.id
+            WHERE mi.id IN ({placeholders})
+            """,
+            tuple(unique_item_ids),
+        )
+        for item_id, item_name, category_id, category_name in c.fetchall():
+            item_lookup[item_id] = {
+                "name": item_name,
+                "category_id": category_id,
+                "category_name": category_name,
+            }
+
+    sales_by_item: dict = {}
+    sales_by_category: dict = {}
+
+    for item in parsed_items:
+        mapping = item_lookup.get(item.get("id"), {})
+        item_name = mapping.get("name") or item.get("name") or "Без названия"
+        quantity = item.get("quantity", 0) or 0
+        price = item.get("price", 0) or 0.0
+        revenue = quantity * price
+
+        item_key = item.get("id") if item.get("id") is not None else item_name
+        item_entry = sales_by_item.setdefault(item_key, {"item": item_name, "count": 0, "revenue": 0.0})
+        item_entry["item"] = item_name
+        item_entry["count"] += quantity
+        item_entry["revenue"] += revenue
+
+        category_id = mapping.get("category_id")
+        category_name = mapping.get("category_name") or "Без категории"
+        category_key = category_id if category_id is not None else category_name
+        category_entry = sales_by_category.setdefault(category_key, {"category": category_name, "count": 0, "revenue": 0.0})
+        category_entry["category"] = category_name
+        category_entry["count"] += quantity
+        category_entry["revenue"] += revenue
+
+    sorted_items = sorted(sales_by_item.values(), key=lambda x: x["revenue"], reverse=True)
+    sorted_categories = sorted(sales_by_category.values(), key=lambda x: x["revenue"], reverse=True)
     
     # 4. Sales over time (chart data)
     # Group by day
@@ -2415,17 +2491,15 @@ def get_dashboard_stats(
     all_statuses = ['pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled']
     orders_by_status = {status: orders_by_status.get(status, 0) for status in all_statuses}
 
-    sorted_items = top_items
-    
     conn.close()
-    
+
     return {
         "total_orders": total_orders,
         "total_revenue": total_revenue,
         "average_check": avg_check or 0,
         "orders_by_status": orders_by_status,
-        "sales_by_item": sorted_items,
-        "sales_by_category": [], # Requires more complex joins, leave empty for now or implement if needed
+        "sales_by_item": sorted_items[:10],
+        "sales_by_category": sorted_categories[:10],
         "chart_data": chart_data,
         "delivery_time_avg": 0, # Not tracked yet
         "dispatch_time_avg": 0  # Not tracked yet
