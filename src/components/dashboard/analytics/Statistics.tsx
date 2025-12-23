@@ -63,13 +63,16 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
         loadStats()
     }, [loadStats])
 
-    const chartPoints = (stats?.chart_data || []).map((point) => ({
-        ...point,
-        orders: Number(point.orders || 0),
-        revenue: Number(point.revenue || 0)
-    }))
+    const chartPoints = (stats?.chart_data || [])
+        .map((point) => ({
+            ...point,
+            orders: Number(point.orders || 0),
+            revenue: Number(point.revenue || 0)
+        }))
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     const visibleChartPoints = chartPoints.slice(-14)
-    const maxOrders = visibleChartPoints.length > 0 ? Math.max(...visibleChartPoints.map((p) => p.orders)) : 0
+    const maxOrdersValue = visibleChartPoints.reduce((max, p) => Math.max(max, p.orders), 0)
+    const safeMaxOrders = maxOrdersValue > 0 ? maxOrdersValue : 1
 
     if (!activeTeam) {
         return (
@@ -146,7 +149,7 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
                                 <div className="h-[300px] flex items-end gap-2">
                                     {visibleChartPoints.length > 0 ? (
                                         visibleChartPoints.map((point, idx) => {
-                                            const height = maxOrders > 0 ? (point.orders / maxOrders) * 100 : 0
+                                            const height = (point.orders / safeMaxOrders) * 100
                                             return (
                                                 <div key={idx} className="flex-1 flex flex-col items-center gap-1">
                                                     <div

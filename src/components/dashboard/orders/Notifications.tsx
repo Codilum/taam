@@ -46,9 +46,26 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
         setLoading(true)
         try {
             const data = await orderService.getNotifications(activeTeam)
-            const newNotifs = (data.notifications || []) as OrderNotification[]
-            const unread = newNotifs.filter((n) => !n.read)
-            const archivedList = newNotifs.filter((n) => n.read)
+            const normalize = (value: any): OrderNotification[] => Array.isArray(value) ? value as OrderNotification[] : []
+            const responseNotifications = normalize((data as any).notifications)
+            const unreadFromPayload = normalize((data as any).unread)
+            const archivedFromPayload = normalize((data as any).archived || (data as any).read || (data as any).read_notifications)
+
+            const unread = (unreadFromPayload.length > 0
+                ? unreadFromPayload
+                : responseNotifications.filter((n) => !n.read))
+
+            const archivedCandidates = archivedFromPayload.length > 0
+                ? archivedFromPayload
+                : responseNotifications.filter((n) => n.read)
+
+            const mergedArchived: OrderNotification[] = []
+            const seen = new Set<number>()
+            ;[...archivedCandidates, ...unread.filter((n) => n.read)].forEach((item) => {
+                if (seen.has(item.id)) return
+                seen.add(item.id)
+                mergedArchived.push({ ...item, read: true })
+            })
 
             if (soundEnabled && unread.length > prevCount.current && prevCount.current > 0) {
                 audioRef.current?.play()
@@ -56,7 +73,7 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
             prevCount.current = unread.length
 
             setNotifications(unread)
-            setArchived(archivedList)
+            setArchived(mergedArchived)
         } catch (error: any) {
             showErrorToast(error.detail || "Не удалось загрузить уведомления")
         } finally {
