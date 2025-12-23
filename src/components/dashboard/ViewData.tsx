@@ -923,3 +923,14 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     </div>
   );
 }
+  useEffect(() => {
+    if (!selectedItem) return;
+
+    const target = itemRefs.current[selectedItem.id];
+    if (target) {
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const offset = headerHeight + 24;
+      const top = window.scrollY + target.getBoundingClientRect().top - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  }, [selectedItem]);
