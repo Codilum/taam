@@ -18,6 +18,7 @@ import { AlertCircleIcon } from "lucide-react";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import GeneralInfo from "./restaurant/GeneralInfo";
 import { orderService, restaurantService, menuService } from "@/services";
+import { toast } from "sonner";
 
 interface MenuItem {
   id: number;
@@ -472,15 +473,30 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     ? [selectedItem.calories, selectedItem.proteins, selectedItem.fats, selectedItem.carbs].some(hasNutritionValue)
     : false;
 
+  const trimmedName = formData.name.trim();
+  const trimmedPhone = formData.phone.trim();
+  const trimmedAddress = formData.address.trim();
+  const canSubmitOrder = Boolean(
+    cartDetails.length > 0 &&
+    trimmedName &&
+    trimmedPhone &&
+    (deliveryMethod === 'pickup' || trimmedAddress)
+  );
+
   const handleSubmitOrder = async () => {
     if (!data?.id) return;
+    if (!canSubmitOrder) {
+      toast.error("Заполните обязательные поля заказа");
+      setCartStep(2);
+      return;
+    }
     setIsSubmitting(true);
     try {
       const res = await orderService.createOrder(data.id, {
-        customer_name: formData.name,
-        customer_phone: formData.phone,
+        customer_name: trimmedName,
+        customer_phone: trimmedPhone,
         delivery_method: deliveryMethod,
-        delivery_address: deliveryMethod === 'delivery' ? formData.address : null,
+        delivery_address: deliveryMethod === 'delivery' ? trimmedAddress : null,
         delivery_zone: null,
         delivery_time: deliveryTime === 'asap' ? 'ASAP' : 'Scheduled',
         payment_method: formData.paymentMethod,
@@ -695,7 +711,14 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 {cartStep === 1 ? 'Мой заказ' : cartStep === 2 ? 'Оформление' : 'Готово!'}
               </DialogTitle>
               {cartStep === 1 && (
-                <button onClick={() => { clearCart(); setIsCartOpen(false); }} className="text-xs text-gray-400 hover:text-red-500">Очистить всё</button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-sm text-gray-600 hover:text-red-600 px-3"
+                  onClick={() => { clearCart(); setIsCartOpen(false); }}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" /> Очистить всё
+                </Button>
               )}
             </div>
 
@@ -785,7 +808,11 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                 </div>
 
                 <div className="pt-4 border-t flex flex-col gap-3">
-                  <Button disabled={isSubmitting} className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold" onClick={handleSubmitOrder}>
+                  <Button
+                    disabled={isSubmitting || !canSubmitOrder}
+                    className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"
+                    onClick={handleSubmitOrder}
+                  >
                     {isSubmitting ? <Loader2 className="animate-spin" /> : `Заказать на ${totalPrice} ₽`}
                   </Button>
                   <button onClick={() => setCartStep(1)} className="text-xs font-medium text-gray-400 py-1">Вернуться к списку</button>

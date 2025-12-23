@@ -33,6 +33,11 @@ const BADGE_COLORS: Record<string, string> = {
     courier: "bg-purple-500 text-white"
 }
 
+const normalizeOrderNumber = (order: Order & { order_number?: string }) => ({
+    ...order,
+    number: order.number || order.order_number || String(order.id)
+})
+
 function formatTime(dateStr: string): string {
     const date = new Date(dateStr.replace(" ", "T"))
     return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
@@ -52,7 +57,7 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
         setLoading(true)
         try {
             const data = await orderService.getActiveOrders(activeTeam)
-            const newOrders = data.orders || []
+            const newOrders = (data.orders || []).map(normalizeOrderNumber)
 
             // Play sound if new orders appeared
             if (soundEnabled && newOrders.length > prevOrderCount.current && prevOrderCount.current > 0) {
