@@ -179,6 +179,9 @@ const ArrowRightIcon = () => (
   </svg>
 );
 
+const hasNutritionValue = (value?: number | null) =>
+  value !== null && value !== undefined && value !== 0;
+
 export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const [data, setData] = useState<RestaurantData | null>(null);
   const [activeCat, setActiveCat] = useState<number | null>(null);
@@ -238,6 +241,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   // refs для секций категорий
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const itemRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const menuHeaderRef = useRef<HTMLDivElement>(null);
   const categoriesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -374,6 +378,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       }
 
       categoryRefs.current = {};
+      itemRefs.current = {};
 
       setData({
         photo: restaurantData.photo,
@@ -666,6 +671,23 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     });
   };
 
+  const scrollItemIntoView = (itemId: number) => {
+    if (typeof window === "undefined") return;
+    const element = itemRefs.current[itemId];
+    if (!element) return;
+
+    const headerHeight =
+      menuHeaderRef.current?.getBoundingClientRect().height || 0;
+    const offset = headerHeight + 24;
+    const rect = element.getBoundingClientRect();
+
+    const targetTop = window.scrollY + rect.top - offset;
+    window.scrollTo({
+      top: targetTop > 0 ? targetTop : 0,
+      behavior: "smooth",
+    });
+  };
+
   const handleItemClick = (
     item: MenuItem,
     index: number,
@@ -676,6 +698,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     setCurrentCategoryId(categoryId);
     setActiveCat(categoryId);
     scrollCategoryIntoView(categoryId);
+    scrollItemIntoView(item.id);
   };
 
   const handleNextItem = () => {
@@ -688,17 +711,21 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     const nextIndex = currentItemIndex + 1;
 
     if (nextIndex < currentCat.items.length) {
-      setSelectedItem(currentCat.items[nextIndex]);
+      const nextItem = currentCat.items[nextIndex];
+      setSelectedItem(nextItem);
       setCurrentItemIndex(nextIndex);
+      scrollItemIntoView(nextItem.id);
     } else if (catIndex + 1 < data.menu.length) {
       const nextCat = data.menu[catIndex + 1];
       if (nextCat.items.length > 0) {
-        setSelectedItem(nextCat.items[0]);
+        const firstItem = nextCat.items[0];
+        setSelectedItem(firstItem);
         setCurrentItemIndex(0);
         setCurrentCategoryId(nextCat.id);
         setActiveCat(nextCat.id);
         scrollToCategory(nextCat.id);
         scrollCategoryIntoView(nextCat.id);
+        scrollItemIntoView(firstItem.id);
       }
     }
   };
@@ -713,18 +740,22 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     const prevIndex = currentItemIndex - 1;
 
     if (prevIndex >= 0) {
-      setSelectedItem(currentCat.items[prevIndex]);
+      const prevItem = currentCat.items[prevIndex];
+      setSelectedItem(prevItem);
       setCurrentItemIndex(prevIndex);
+      scrollItemIntoView(prevItem.id);
     } else if (catIndex - 1 >= 0) {
       const prevCat = data.menu[catIndex - 1];
       if (prevCat.items.length > 0) {
         const lastIndex = prevCat.items.length - 1;
-        setSelectedItem(prevCat.items[lastIndex]);
+        const lastItem = prevCat.items[lastIndex];
+        setSelectedItem(lastItem);
         setCurrentItemIndex(lastIndex);
         setCurrentCategoryId(prevCat.id);
         setActiveCat(prevCat.id);
         scrollToCategory(prevCat.id);
         scrollCategoryIntoView(prevCat.id);
+        scrollItemIntoView(lastItem.id);
       }
     }
   };
@@ -1321,6 +1352,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                           return (
                             <div
                               key={item.id}
+                              ref={(el) => {
+                                itemRefs.current[item.id] = el;
+                              }}
                               className={cn(
                                 "relative flex h-full flex-col rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden",
                                 inCart ? "border border-black" : ""
@@ -1437,7 +1471,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
               <DialogTitle className="text-lg font-semibold">
                 Мой список
               </DialogTitle>
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-gray-500 gap-3">
                 <span>Позиций: {uniqueItemCount}</span>
                 <button
                   type="button"
@@ -1445,9 +1479,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                     clearCart();
                     setIsCartOpen(false);
                   }}
-                  className="text-xs text-gray-500"
+                  className="flex items-center gap-1 rounded-md border border-gray-200 px-3 py-1 text-xs text-gray-700 hover:bg-gray-100"
                 >
-                  Очистить список
+                  <span>Очистить список</span>
                 </button>
               </div>
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-0">
@@ -1550,25 +1584,25 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
             {/* KBJU + Weight */}
             <div className="flex justify-between items-center text-xs text-gray-600 pt-2">
               <div className="flex gap-4 text-center">
-                {selectedItem?.calories !== 0.0 && selectedItem?.calories && (
+                {hasNutritionValue(selectedItem?.calories) && (
                   <div>
                     <p className="font-normal text-black">Ккал</p>
                     <p>{selectedItem.calories}</p>
                   </div>
                 )}
-                {selectedItem?.proteins !== 0.0 && selectedItem?.proteins && (
+                {hasNutritionValue(selectedItem?.proteins) && (
                   <div>
                     <p className="font-normal text-black">Белки</p>
                     <p>{selectedItem.proteins}</p>
                   </div>
                 )}
-                {selectedItem?.fats !== 0.0 && selectedItem?.fats && (
+                {hasNutritionValue(selectedItem?.fats) && (
                   <div>
                     <p className="font-normal text-black">Жиры</p>
                     <p>{selectedItem.fats}</p>
                   </div>
                 )}
-                {selectedItem?.carbs !== 0.0 && selectedItem?.carbs && (
+                {hasNutritionValue(selectedItem?.carbs) && (
                   <div>
                     <p className="font-normal text-black">Углеводы</p>
                     <p>{selectedItem.carbs}</p>

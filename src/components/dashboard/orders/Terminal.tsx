@@ -43,6 +43,7 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
     const [loading, setLoading] = useState(false)
     const [soundEnabled, setSoundEnabled] = useState(false)
     const [updating, setUpdating] = useState<number | null>(null)
+    const [autoRefresh, setAutoRefresh] = useState(false)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevOrderCount = useRef<number>(0)
 
@@ -69,9 +70,12 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
 
     useEffect(() => {
         loadOrders()
-        const interval = setInterval(loadOrders, 30000) // Poll every 30 seconds
-        return () => clearInterval(interval)
     }, [loadOrders])
+
+    useEffect(() => {
+        const interval = setInterval(loadOrders, autoRefresh ? 10000 : 30000)
+        return () => clearInterval(interval)
+    }, [autoRefresh, loadOrders])
 
     const handleStatusChange = async (orderId: number, newStatus: string) => {
         setUpdating(orderId)
@@ -118,6 +122,14 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold">Терминал заказов</h1>
                 <div className="flex gap-2">
+                    <Button
+                        variant={autoRefresh ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setAutoRefresh(prev => !prev)}
+                    >
+                        <RefreshCw className={cn("size-4 mr-2", autoRefresh && "animate-spin")} />
+                        Автообновление
+                    </Button>
                     <Button variant="outline" size="sm" onClick={loadOrders} disabled={loading}>
                         <RefreshCw className={cn("size-4 mr-2", loading && "animate-spin")} />
                         Обновить

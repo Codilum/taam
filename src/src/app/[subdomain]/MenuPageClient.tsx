@@ -2,7 +2,7 @@
 "use client"
 
 import Image from "next/image"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -64,10 +64,22 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null)
   const [currentItemIndex, setCurrentItemIndex] = useState<number>(-1)
   const [activeCat, setActiveCat] = useState<number | null>(null)
+  const itemRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   const handleItemClick = (item: MenuItem, index: number) => {
     setSelectedItem(item)
     setCurrentItemIndex(index)
+  }
+
+  const scrollItemIntoView = (itemId: number) => {
+    if (typeof window === "undefined") return
+    const element = itemRefs.current[itemId]
+    if (!element) return
+
+    const offset = 120
+    const rect = element.getBoundingClientRect()
+    const targetTop = window.scrollY + rect.top - offset
+    window.scrollTo({ top: targetTop > 0 ? targetTop : 0, behavior: "smooth" })
   }
 
   const findCatByItem = (item: MenuItem | null) =>
@@ -84,12 +96,14 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
     if (nextIndex < currentCat.items.length) {
       setSelectedItem(currentCat.items[nextIndex])
       setCurrentItemIndex(nextIndex)
+      scrollItemIntoView(currentCat.items[nextIndex].id)
     } else if (catIndex + 1 < data.menu.length) {
       const nextCat = data.menu[catIndex + 1]
       if (nextCat.items.length > 0) {
         setSelectedItem(nextCat.items[0])
         setCurrentItemIndex(0)
         setActiveCat(nextCat.id)
+        scrollItemIntoView(nextCat.items[0].id)
       }
     }
   }
@@ -105,12 +119,14 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
     if (prevIndex >= 0) {
       setSelectedItem(currentCat.items[prevIndex])
       setCurrentItemIndex(prevIndex)
+      scrollItemIntoView(currentCat.items[prevIndex].id)
     } else if (catIndex - 1 >= 0) {
       const prevCat = data.menu[catIndex - 1]
       if (prevCat.items.length > 0) {
         setSelectedItem(prevCat.items[prevCat.items.length - 1])
         setCurrentItemIndex(prevCat.items.length - 1)
         setActiveCat(prevCat.id)
+        scrollItemIntoView(prevCat.items[prevCat.items.length - 1].id)
       }
     }
   }
@@ -188,8 +204,14 @@ export default function MenuPageClient({ data }: { data: RestaurantData }) {
             <h3 className="text-2xl font-bold">{cat.name}</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {cat.items.map((item, idx) => (
-                <div key={item.id} className="cursor-pointer rounded-xl p-2 hover:bg-gray-100"
-                     onClick={() => handleItemClick(item, idx)}>
+                <div
+                  key={item.id}
+                  ref={(el) => {
+                    itemRefs.current[item.id] = el
+                  }}
+                  className="cursor-pointer rounded-xl p-2 hover:bg-gray-100"
+                  onClick={() => handleItemClick(item, idx)}
+                >
                   {item.photo ? (
                     <Image src={item.photo} alt={item.name} width={256} height={128} className="object-cover w-full h-32 rounded-xl mb-2" />
                   ) : (

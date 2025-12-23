@@ -107,7 +107,7 @@ export function AppSidebar({
   setActiveTeam: (team: string) => void
 }) {
   const isMobile = useIsMobile()
-  const { setOpen } = useSidebar() // 👈 доступ к состоянию боковой панели
+  const { setOpen, state } = useSidebar() // 👈 доступ к состоянию боковой панели
 
   const [qrCollapsed, setQrCollapsed] = useState(true)
   const [user, setUser] = useState<UserData | null>(null)
@@ -278,7 +278,9 @@ export function AppSidebar({
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <TeamSwitcher activeTeam={activeTeam} setActiveTeam={setActiveTeam} />
-        <SearchForm value={searchQuery} onSearchChange={setSearchQuery} />
+        {state === "expanded" && (
+          <SearchForm value={searchQuery} onSearchChange={setSearchQuery} />
+        )}
       </SidebarHeader>
 
       <SidebarContent>

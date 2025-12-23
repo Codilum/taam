@@ -25,18 +25,39 @@ export default function Statistics({ activeTeam }: { activeTeam: string }) {
     const [loading, setLoading] = useState(false)
     const [period, setPeriod] = useState<StatsPeriod>("day")
 
+    const storageKey = activeTeam ? `taam_stats_${activeTeam}_${period}` : null
+
+    useEffect(() => {
+        if (!storageKey) return
+        try {
+            const cached = localStorage.getItem(storageKey)
+            if (cached) {
+                const parsed = JSON.parse(cached) as { data: DashboardStats }
+                if (parsed?.data) {
+                    setStats(parsed.data)
+                }
+            }
+        } catch (error) {
+            console.error("Не удалось прочитать статистику из кеша", error)
+        }
+    }, [storageKey])
+
     const loadStats = useCallback(async () => {
         if (!activeTeam) return
         setLoading(true)
         try {
             const data = await statsService.getDashboardStats(activeTeam, period)
-            setStats(data)
+            const normalized = (data as any).stats || data
+            setStats(normalized)
+            if (storageKey) {
+                localStorage.setItem(storageKey, JSON.stringify({ data: normalized }))
+            }
         } catch (error: any) {
             showErrorToast(error.detail || "Не удалось загрузить статистику")
         } finally {
             setLoading(false)
         }
-    }, [activeTeam, period])
+    }, [activeTeam, period, storageKey])
 
     useEffect(() => {
         loadStats()
