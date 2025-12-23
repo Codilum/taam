@@ -1071,7 +1071,7 @@ class Restaurant(BaseModel):
     qr_code: Optional[str] = None
     subdomain: Optional[str] = None
     currency: Optional[str] = 'RUB'
-    delivery_settings: Optional[str] = None
+    delivery_settings: Optional[dict[str, Any]] = None
     subscription: Optional[RestaurantSubscriptionInfo] = None
 
 class CreateRestaurantRequest(BaseModel):
