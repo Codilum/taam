@@ -47,11 +47,9 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
     const [soundEnabled, setSoundEnabled] = useState(false)
     const [autoRefresh, setAutoRefresh] = useState(false)
     const [archived, setArchived] = useState<Notification[]>([])
-    const archivedRef = useRef<Notification[]>([])
+    const [markingAll, setMarkingAll] = useState(false)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevCount = useRef<number>(0)
-
-    const storageKey = activeTeam ? `taam_archived_notifications_${activeTeam}` : null
 
     const loadNotifications = useCallback(async () => {
         if (!activeTeam) return
@@ -59,56 +57,23 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
         try {
             const data = await orderService.getNotifications(activeTeam)
             const newNotifs = data.notifications || []
+            const unread = newNotifs.filter((notif) => !notif.read)
+            const archivedList = newNotifs.filter((notif) => notif.read)
 
             // Play sound if new notifications
-            if (soundEnabled && newNotifs.length > prevCount.current && prevCount.current > 0) {
+            if (soundEnabled && unread.length > prevCount.current && prevCount.current > 0) {
                 audioRef.current?.play()
             }
-            prevCount.current = newNotifs.length
+            prevCount.current = unread.length
 
-            const archivedIds = new Set(archivedRef.current.map(n => n.id))
-            const incomingArchived = newNotifs.filter(n => archivedIds.has(n.id) || n.read)
-            const fresh = newNotifs.filter(n => !archivedIds.has(n.id) && !n.read)
-
-            setNotifications(fresh)
-            if (incomingArchived.length > 0) {
-                setArchived((prev) => {
-                    const merged = [...prev]
-                    incomingArchived.forEach((notif) => {
-                        if (!merged.some((n) => n.id === notif.id)) {
-                            merged.push({ ...notif, read: true })
-                        }
-                    })
-                    return merged
-                })
-            }
+            setNotifications(unread)
+            setArchived(archivedList)
         } catch (error: any) {
             showErrorToast(error.detail || "Не удалось загрузить уведомления")
         } finally {
             setLoading(false)
         }
     }, [activeTeam, soundEnabled])
-
-    useEffect(() => {
-        archivedRef.current = archived
-    }, [archived])
-
-    useEffect(() => {
-        if (!storageKey) return
-        try {
-            const cached = localStorage.getItem(storageKey)
-            if (cached) {
-                setArchived(JSON.parse(cached))
-            }
-        } catch (error) {
-            console.error("Не удалось загрузить архив уведомлений", error)
-        }
-    }, [storageKey])
-
-    useEffect(() => {
-        if (!storageKey) return
-        localStorage.setItem(storageKey, JSON.stringify(archived))
-    }, [archived, storageKey])
 
     useEffect(() => {
         loadNotifications()
@@ -123,18 +88,35 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
         setSoundEnabled(prev => !prev)
     }
 
-    const archiveNotification = (notif: Notification) => {
+    const archiveNotification = async (notif: Notification) => {
+        if (!activeTeam) return
         setNotifications((prev) => prev.filter((n) => n.id !== notif.id))
         setArchived((prev) => prev.some((n) => n.id === notif.id) ? prev : [...prev, { ...notif, read: true }])
+        try {
+            await orderService.markNotificationRead(activeTeam, notif.id)
+        } catch (error: any) {
+            showErrorToast(error.detail || "Не удалось обновить уведомление")
+            loadNotifications()
+        }
     }
 
-    const markAllAsRead = () => {
-        setArchived((prev) => {
-            const archivedIds = new Set(prev.map((n) => n.id))
-            const toArchive = notifications.filter((n) => !archivedIds.has(n.id)).map((n) => ({ ...n, read: true }))
-            return [...prev, ...toArchive]
-        })
-        setNotifications([])
+    const markAllAsRead = async () => {
+        if (!activeTeam || notifications.length === 0) return
+        setMarkingAll(true)
+        try {
+            await orderService.markAllNotificationsRead(activeTeam)
+            setArchived((prev) => {
+                const archivedIds = new Set(prev.map((n) => n.id))
+                const toArchive = notifications.filter((n) => !archivedIds.has(n.id)).map((n) => ({ ...n, read: true }))
+                return [...prev, ...toArchive]
+            })
+            setNotifications([])
+        } catch (error: any) {
+            showErrorToast(error.detail || "Не удалось отметить уведомления")
+            loadNotifications()
+        } finally {
+            setMarkingAll(false)
+        }
     }
 
     if (!activeTeam) {
@@ -199,7 +181,13 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
                                 <div className="flex items-center justify-between px-4 py-2 text-xs uppercase tracking-wide text-muted-foreground">
                                     <span>Новые уведомления</span>
                                     {notifications.length > 0 && (
-                                        <Button variant="ghost" size="sm" onClick={markAllAsRead} className="text-xs h-8 px-2">
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={markAllAsRead}
+                                            disabled={markingAll}
+                                            className="text-xs h-8 px-2"
+                                        >
                                             Отметить все
                                         </Button>
                                     )}
