@@ -723,15 +723,15 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
         <DialogContent className="max-w-md w-[95vw] p-0 rounded-3xl overflow-hidden gap-0">
           <div className="p-6">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 pr-12 gap-3">
               <DialogTitle className="text-xl font-bold">
                 {cartStep === 1 ? 'Мой заказ' : cartStep === 2 ? 'Оформление' : 'Готово!'}
               </DialogTitle>
               {cartStep === 1 && (
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-sm text-gray-600 hover:text-red-600 px-3"
+                  variant="outline"
+                  size="default"
+                  className="text-sm text-gray-700 hover:text-red-600 px-4 h-10 rounded-xl"
                   onClick={() => { clearCart(); setIsCartOpen(false); }}
                 >
                   <Trash2 className="w-4 h-4 mr-1" /> Очистить всё

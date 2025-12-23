@@ -62,6 +62,12 @@ export const orderService = {
     getNotifications: (restaurantId: string | number) =>
         api.get<{ notifications: any[] }>(`/restaurants/${restaurantId}/notifications`),
 
+    markNotificationRead: (restaurantId: string | number, notificationId: number) =>
+        api.post(`/restaurants/${restaurantId}/notifications/${notificationId}/read`, {}),
+
+    markAllNotificationsRead: (restaurantId: string | number) =>
+        api.post(`/restaurants/${restaurantId}/notifications/read-all`, {}),
+
     createOrder: (restaurantId: string | number, data: any) =>
         api.post<{ order_id: number; order_number: string }>(`/restaurants/${restaurantId}/orders`, data)
 }
