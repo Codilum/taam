@@ -11,3 +11,9 @@ wheels/
 
 .DS_Store
 *.zip
+node_modules/
+.env
+.vscode/
+.idea/
+*.log
+.next/
