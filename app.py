@@ -86,6 +86,23 @@ def format_datetime(value: datetime | None) -> str | None:
     return value.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def normalize_delivery_settings(value: Any) -> dict | None:
+    if value is None:
+        return None
+
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+
+    if isinstance(parsed, dict):
+        return parsed
+
+    return None
+
+
 SUBSCRIPTION_PLANS_DATA = [
     {
         "code": "base",
@@ -2066,10 +2083,11 @@ def get_restaurant(restaurant_id: int):
     conn.close()
     if not row:
         raise HTTPException(404, "Заведение не найдено")
-    
+
     features = json.loads(row[11]) if row[11] else []
     photo_url = f"/uploads/{row[1]}" if row[1] else None
     subscription = get_active_subscription(row[0]) or get_latest_subscription(row[0])
+    delivery_settings = normalize_delivery_settings(row[16])
 
     return {
         "id": row[0],
@@ -2088,7 +2106,7 @@ def get_restaurant(restaurant_id: int):
         "phone": row[13],
         "subdomain": row[14],
         "currency": row[15] or 'RUB',
-        "delivery_settings": row[16],
+        "delivery_settings": delivery_settings,
         "qr_code": get_qr_url(row[0]),
         "subscription": format_subscription_payload(subscription),
     }
@@ -2160,11 +2178,11 @@ def update_restaurant(restaurant_id: int, req: UpdateRestaurantRequest, current_
         updates.append("currency = ?")
         values.append(req.currency)
     if req.delivery_settings is not None:
+        normalized_settings = normalize_delivery_settings(req.delivery_settings)
+        if normalized_settings is None:
+            raise HTTPException(400, "Некорректные настройки доставки")
         updates.append("delivery_settings = ?")
-        settings_value = req.delivery_settings
-        if isinstance(settings_value, (dict, list)):
-            settings_value = json.dumps(settings_value)
-        values.append(settings_value)
+        values.append(json.dumps(normalized_settings))
     if not updates:
         raise HTTPException(400, "Нет полей для обновления")
     values.append(restaurant_id)
@@ -2213,8 +2231,8 @@ def update_delivery_settings(restaurant_id: int, req: DeliverySettingsUpdate, cu
     if not row:
         conn.close()
         raise HTTPException(404, "Заведение не найдено")
-    
-    current_settings = json.loads(row[0]) if row[0] else {}
+
+    current_settings = normalize_delivery_settings(row[0]) or {}
     if req.zones is not None:
         current_settings["zones"] = req.zones
     if req.min_order_amount is not None:
@@ -3010,10 +3028,11 @@ def get_restaurant_by_subdomain(subdomain: str):
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Ресторан не найден")
-    
+
     features = json.loads(row[11]) if row[11] else []
     photo_url = f"/uploads/{row[1]}" if row[1] else None
-    
+    delivery_settings = normalize_delivery_settings(row[16])
+
     return {
         "id": row[0],
         "photo": photo_url,
@@ -3031,7 +3050,7 @@ def get_restaurant_by_subdomain(subdomain: str):
         "phone": row[13],
         "subdomain": row[14],
         "currency": row[15] or "RUB",
-        "delivery_settings": row[16],
+        "delivery_settings": delivery_settings,
     }
 
 @app.get("/api/menu/by-subdomain/{subdomain}")

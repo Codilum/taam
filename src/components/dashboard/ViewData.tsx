@@ -51,6 +51,24 @@ interface CartEntry extends CartItemDetails {
   quantity: number;
 }
 
+type PaymentMethod = "cash" | "card" | "transfer";
+
+interface DeliveryMethodSettings {
+  enabled: boolean;
+  message: string;
+  payment_methods: PaymentMethod[];
+  allow_asap: boolean;
+  allow_scheduled: boolean;
+  discount_percent?: number;
+  asap_time_hint?: string;
+  cost_info?: string;
+}
+
+interface DeliverySettingsData {
+  delivery: DeliveryMethodSettings;
+  pickup: DeliveryMethodSettings;
+}
+
 interface RestaurantData {
   id: number;
   photo: string | null;
@@ -69,25 +87,7 @@ interface RestaurantData {
   subdomain: string | null;
   type: string | null;
   currency: string | null;
-  delivery_settings: string | null;
-}
-
-type PaymentMethod = "cash" | "card" | "transfer";
-
-interface DeliveryMethodSettings {
-  enabled: boolean;
-  message: string;
-  payment_methods: PaymentMethod[];
-  allow_asap: boolean;
-  allow_scheduled: boolean;
-  discount_percent?: number;
-  asap_time_hint?: string;
-  cost_info?: string;
-}
-
-interface DeliverySettingsData {
-  delivery: DeliveryMethodSettings;
-  pickup: DeliveryMethodSettings;
+  delivery_settings: DeliverySettingsData | string | null;
 }
 
 const defaultDeliverySettings: DeliverySettingsData = {
