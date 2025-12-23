@@ -2397,41 +2397,25 @@ def get_dashboard_stats(
     # Group by day
     c.execute(
         f"""
-        SELECT date(created_at) as day, SUM(amount), COUNT(*) 
-        FROM orders 
+        SELECT date(created_at) as day, SUM(amount), COUNT(*)
+        FROM orders
         WHERE restaurant_id = ? {date_filter} AND status != 'canceled'
-        GROUP BY day 
+        GROUP BY day
         ORDER BY day ASC
         """,
         tuple(params)
     )
-    # 3. Aggregated stats from individual orders
-    orders_by_status = {s: 0 for s in ['pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled']}
-    sales_by_item = {}  # name -> {count, revenue}
-    sales_by_category = {} # category -> {count, revenue}
-    
-    c.execute(f"SELECT status, items FROM orders WHERE restaurant_id = ? {date_filter}", tuple(params))
-    for row in c.fetchall():
-        status, items_json = row
-        if status in orders_by_status:
-            orders_by_status[status] += 1
-        
-        try:
-            items = json.loads(items_json)
-            for it in items:
-                name = it.get('name', 'Unknown')
-                qty = it.get('quantity', 1)
-                price = it.get('price', 0)
-                
-                if name not in sales_by_item:
-                    sales_by_item[name] = {"item": name, "count": 0, "revenue": 0}
-                sales_by_item[name]["count"] += qty
-                sales_by_item[name]["revenue"] += qty * price
-        except:
-            continue
+    chart_rows = c.fetchall()
+    chart_data = [
+        {"date": day, "revenue": (revenue or 0.0), "orders": orders}
+        for day, revenue, orders in chart_rows
+    ]
 
-    # Sort and format
-    sorted_items = sorted(sales_by_item.values(), key=lambda x: x["revenue"], reverse=True)
+    # Normalize status keys to include zeros for missing statuses
+    all_statuses = ['pending', 'cooking', 'ready', 'courier', 'delivered', 'canceled']
+    orders_by_status = {status: orders_by_status.get(status, 0) for status in all_statuses}
+
+    sorted_items = top_items
     
     conn.close()
     

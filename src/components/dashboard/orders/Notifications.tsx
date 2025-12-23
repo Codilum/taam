@@ -47,6 +47,7 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
     const [soundEnabled, setSoundEnabled] = useState(false)
     const [autoRefresh, setAutoRefresh] = useState(false)
     const [archived, setArchived] = useState<Notification[]>([])
+    const archivedRef = useRef<Notification[]>([])
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevCount = useRef<number>(0)
 
@@ -65,26 +66,32 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
             }
             prevCount.current = newNotifs.length
 
-            const archivedIds = new Set(archived.map(n => n.id))
+            const archivedIds = new Set(archivedRef.current.map(n => n.id))
             const incomingArchived = newNotifs.filter(n => archivedIds.has(n.id) || n.read)
             const fresh = newNotifs.filter(n => !archivedIds.has(n.id) && !n.read)
 
             setNotifications(fresh)
             if (incomingArchived.length > 0) {
-                const merged = [...archived]
-                incomingArchived.forEach((notif) => {
-                    if (!merged.some((n) => n.id === notif.id)) {
-                        merged.push({ ...notif, read: true })
-                    }
+                setArchived((prev) => {
+                    const merged = [...prev]
+                    incomingArchived.forEach((notif) => {
+                        if (!merged.some((n) => n.id === notif.id)) {
+                            merged.push({ ...notif, read: true })
+                        }
+                    })
+                    return merged
                 })
-                setArchived(merged)
             }
         } catch (error: any) {
             showErrorToast(error.detail || "Не удалось загрузить уведомления")
         } finally {
             setLoading(false)
         }
-    }, [activeTeam, soundEnabled, archived])
+    }, [activeTeam, soundEnabled])
+
+    useEffect(() => {
+        archivedRef.current = archived
+    }, [archived])
 
     useEffect(() => {
         if (!storageKey) return
