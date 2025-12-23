@@ -157,11 +157,11 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
             <Card className="flex-1">
                 <ScrollArea className="h-[calc(100vh-200px)]">
                     <CardContent className="p-0">
-                        {loading && notifications.length === 0 ? (
+                        {loading && notifications.length === 0 && archived.length === 0 ? (
                             <div className="flex items-center justify-center py-20">
                                 <Loader2 className="size-8 animate-spin text-muted-foreground" />
                             </div>
-                        ) : notifications.length === 0 ? (
+                        ) : notifications.length === 0 && archived.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
                                 <Bell className="size-12 mb-4 opacity-50" />
                                 <p>Уведомлений пока нет</p>
@@ -176,34 +176,41 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
                                         </Button>
                                     )}
                                 </div>
-                                {notifications.map((notif) => (
-                                    <div
-                                        key={notif.id}
-                                        className={cn(
-                                            "flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors",
-                                            !notif.read && "bg-primary/5"
-                                        )}
-                                    >
-                                        <div className="mt-1">
-                                            {NOTIFICATION_ICONS[notif.type] || <Bell className="size-5" />}
-                                        </div>
-                                        <div className="flex-1 min-w-0 space-y-1">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-semibold">Заказ #{notif.order_number}</span>
-                                                {!notif.read && (
-                                                    <Badge variant="default" className="text-xs">Новое</Badge>
-                                                )}
-                                            </div>
-                                            <p className="text-sm text-muted-foreground">{notif.message}</p>
-                                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                                <span>{formatTime(notif.created_at)}</span>
-                                                <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => archiveNotification(notif)}>
-                                                    В архив
-                                                </Button>
-                                            </div>
-                                        </div>
+                                {notifications.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                                        <Bell className="size-8 mb-2 opacity-50" />
+                                        <p className="text-sm">Новых уведомлений нет</p>
                                     </div>
-                                ))}
+                                ) : (
+                                    notifications.map((notif) => (
+                                        <div
+                                            key={notif.id}
+                                            className={cn(
+                                                "flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors",
+                                                !notif.read && "bg-primary/5"
+                                            )}
+                                        >
+                                            <div className="mt-1">
+                                                {NOTIFICATION_ICONS[notif.type] || <Bell className="size-5" />}
+                                            </div>
+                                            <div className="flex-1 min-w-0 space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-semibold">Заказ #{notif.order_number}</span>
+                                                    {!notif.read && (
+                                                        <Badge variant="default" className="text-xs">Новое</Badge>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-muted-foreground">{notif.message}</p>
+                                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                    <span>{formatTime(notif.created_at)}</span>
+                                                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => archiveNotification(notif)}>
+                                                        В архив
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
 
                                 {archived.length > 0 && (
                                     <div className="bg-muted/30">
