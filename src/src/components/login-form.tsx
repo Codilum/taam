@@ -19,7 +19,7 @@ import { PasswordInput } from "@/components/password-input"
 
 type Mode = "login" | "register" | "forgot" | "reset"
 
-const API_URL = "/api"
+const API_URL = "http://taam.menu/api"
 
 export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const router = useRouter()

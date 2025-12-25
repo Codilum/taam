@@ -1102,34 +1102,38 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
             <p className="text-gray-600 leading-relaxed">{selectedItem?.description || "Нет описания"}</p>
 
-            {hasSelectedItemNutrition && (
+            {selectedItem && hasSelectedItemNutrition && (
               <div className="grid grid-cols-4 gap-2 text-center py-4 border-y border-dashed">
-                {hasNutritionValue(selectedItem?.calories) && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">Ккал</p>
-                    <p className="text-sm font-bold">{selectedItem?.calories}</p>
+                {hasNutritionValue(selectedItem.calories) && (
+                  <div>
+                    <p className="font-normal text-black">Ккал</p>
+                    <p>{selectedItem.calories}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.proteins) && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">Белки</p>
-                    <p className="text-sm font-bold">{selectedItem?.proteins}</p>
+
+                {hasNutritionValue(selectedItem.proteins) && (
+                  <div>
+                    <p className="font-normal text-black">Белки</p>
+                    <p>{selectedItem.proteins}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.fats) && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">Жиры</p>
-                    <p className="text-sm font-bold">{selectedItem?.fats}</p>
+
+                {hasNutritionValue(selectedItem.fats) && (
+                  <div>
+                    <p className="font-normal text-black">Жиры</p>
+                    <p>{selectedItem.fats}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.carbs) && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-gray-400 font-bold uppercase">Угл.</p>
-                    <p className="text-sm font-bold">{selectedItem?.carbs}</p>
+
+                {hasNutritionValue(selectedItem.carbs) && (
+                  <div>
+                    <p className="font-normal text-black">Углеводы</p>
+                    <p>{selectedItem.carbs}</p>
                   </div>
                 )}
               </div>
             )}
+
 
             <div className="flex flex-col gap-3">
               <div className="flex gap-2">
