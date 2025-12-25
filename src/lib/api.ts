@@ -1,4 +1,5 @@
-export const API_URL = "http://taam.menu/api";
+const DEFAULT_API_URL = "https://taam.menu/api";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL;
 
 export type ApiError = {
   message?: string;
