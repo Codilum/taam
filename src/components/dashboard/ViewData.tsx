@@ -684,65 +684,250 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       <div className="bg-white rounded-b-[18px] md:bg-transparent md:rounded-none">
         {data.photo && (
           <div className="w-full h-[150px] md:hidden overflow-hidden px-4 mt-4">
-            <img src={data.photo} className="w-full h-full object-cover rounded-[8px]" />
+            <img
+              src={data.photo}
+              alt={data.name || "Фото заведения"}
+              width={1200}
+              height={150}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover rounded-[8px]"
+            />
           </div>
         )}
-        <div className="px-0 md:px-4 max-w-6xl mx-auto">
-          {/* Mobile Header */}
-          <div className="md:hidden p-4 space-y-4">
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-              <img src="https://taam.menu/menu.gif" className="w-6 h-6" />
-              {data.type && <Badge className="bg-[#90FF55] text-black">{data.type}</Badge>}
-              {data.features.map(f => <Badge key={f} className="bg-yellow-300 text-black">{f}</Badge>)}
-            </div>
-            <h1 className="text-2xl font-bold">{data.name}</h1>
-            <p className="text-gray-700">{data.description || "Нет описания"}</p>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><h3 className="font-semibold text-gray-600">Город</h3><p>{data.city}</p></div>
-              <div><h3 className="font-semibold text-gray-600">Адрес</h3><p>{data.address}</p></div>
-              <div><h3 className="font-semibold text-gray-600">Телефон</h3><p>{data.phone}</p></div>
-            </div>
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h3 className="font-semibold mb-2 text-center">График работы</h3>
-              {formatHours(data.hours)}
-            </div>
-          </div>
 
-          {/* Desktop Header */}
-          <div className="hidden md:block bg-white rounded-b-[18px] p-8 mt-4">
-            <div className="flex gap-8">
-              <div className="flex-1 space-y-6">
-                <div>
-                  <h1 className="text-3xl font-bold">{data.name}</h1>
-                  <div className="flex gap-2 mt-2">
-                    {data.type && <Badge className="bg-[#90FF55] text-black">{data.type}</Badge>}
-                    {data.features.map(f => <Badge key={f} className="bg-yellow-300 text-black">{f}</Badge>)}
+        <div className="px-0 md:px-4">
+          <div className="max-w-6xl mx-auto">
+            <div className="md:hidden p-4 space-y-4">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2">
+                <img src="https://taam.menu/menu.gif" alt="menu gif" className="w-6 h-6 md:hidden" />
+                {data.type && (
+                  <Badge className="bg-[#90FF55] text-black whitespace-nowrap">{data.type}</Badge>
+                )}
+                {data.features.map((feature) => (
+                  <Badge key={feature} className="bg-yellow-300 text-black whitespace-nowrap">
+                    {feature}
+                  </Badge>
+                ))}
+              </div>
+
+              <h1 className="text-2xl font-bold">{data.name}</h1>
+
+              <p className="text-gray-700">{data.description || "Нет описания"}</p>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-sm text-gray-600">Город</h3>
+                    <p className="text-base">{data.city || "—"}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-sm text-gray-600">Адрес</h3>
+                    <p className="text-base">{data.address || "—"}</p>
                   </div>
                 </div>
-                <div>
-                  <span className="text-xs font-semibold uppercase text-gray-500">Описание</span>
-                  <p className="text-gray-700 mt-1">{data.description || "Нет описания"}</p>
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 bg-gray-50 rounded-xl">
-                    <span className="text-xs font-semibold uppercase text-gray-500">Город</span>
-                    <p className="mt-1 font-medium">{data.city}</p>
-                  </div>
-                  <div className="p-4 bg-gray-50 rounded-xl">
-                    <span className="text-xs font-semibold uppercase text-gray-500">Адрес</span>
-                    <p className="mt-1 font-medium">{addressWithoutCity || data.address}</p>
-                  </div>
-                  <div className="p-4 bg-gray-50 rounded-xl">
-                    <span className="text-xs font-semibold uppercase text-gray-500">Телефон</span>
-                    <p className="mt-1 font-medium">{data.phone}</p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-sm text-gray-600">Телефон</h3>
+                    <p className="text-base">{data.phone || "—"}</p>
                   </div>
                 </div>
               </div>
-              {data.photo && (
-                <div className="w-64 h-64 rounded-2xl overflow-hidden border">
-                  <img src={data.photo} className="w-full h-full object-cover" />
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h3 className="font-semibold mb-3 text-center">График работы</h3>
+                <div className="text-base">{formatHours(data.hours)}</div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h3 className="font-semibold mb-3 text-center">Мы в соцсетях</h3>
+                <div className="flex gap-4 justify-center items-center">
+                  {data.instagram && (
+                    <a
+                      href={data.instagram}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 bg-white rounded-lg"
+                    >
+                      <Instagram className="w-6 h-6" />
+                    </a>
+                  )}
+                  {data.telegram && (
+                    <a
+                      href={`https://t.me/${data.telegram}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 bg-white rounded-lg"
+                    >
+                      <Send className="w-6 h-6" />
+                    </a>
+                  )}
+                  {data.whatsapp && (
+                    <a
+                      href={`https://wa.me/${data.whatsapp}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 bg-white rounded-lg w-10 h-10 flex items-center justify-center"
+                    >
+                      <svg
+                        xmlns="https://www.w3.org/2000/svg"
+                        viewBox="0 0 640 640"
+                        fill="currentColor"
+                        className="w-6 h-6"
+                      >
+                        <path d="M476.9 161.1C435 119.1 379.2 96 319.9 96C197.5 96 97.9 195.6 97.9 318C97.9 357.1 108.1 395.3 127.5 429L96 544L213.7 513.1C246.1 530.8 282.6 540.1 319.8 540.1L319.9 540.1C442.2 540.1 544 440.5 544 318.1C544 258.8 518.8 203.1 476.9 161.1zM319.9 502.7C286.7 502.7 254.2 493.8 225.9 477L219.2 473L149.4 491.3L168 423.2L163.6 416.2C145.1 386.8 135.4 352.9 135.4 318C135.4 216.3 218.2 133.5 320 133.5C369.3 133.5 415.6 152.7 450.4 187.6C485.2 222.5 506.6 268.8 506.5 318.1C506.5 419.9 421.6 502.7 319.9 502.7zM421.1 364.5C415.6 361.7 388.3 348.3 383.2 346.5C378.1 344.6 374.4 343.7 370.7 349.3C367 354.9 356.4 367.3 353.1 371.1C349.9 374.8 346.6 375.3 341.1 372.5C308.5 356.2 287.1 343.4 265.6 306.5C259.9 296.7 271.3 297.4 281.9 276.2C283.7 272.5 282.8 269.3 281.4 266.5C280 263.7 268.9 236.4 264.3 225.3C259.8 214.5 255.2 216 251.8 215.8C248.6 215.6 244.9 215.6 241.2 215.6C237.5 215.6 231.5 217 226.4 222.5C221.3 228.1 207 241.5 207 268.8C207 296.1 226.9 322.5 229.6 326.2C232.4 329.9 268.7 385.9 324.4 410C359.6 425.2 373.4 426.5 391 423.9C401.7 422.3 423.8 410.5 428.4 397.5C433 384.5 433 373.4 431.6 371.1C430.3 368.6 426.6 367.2 421.1 364.5z" />
+                      </svg>
+                    </a>
+                  )}
+                  {data.vk && (
+                    <a
+                      href={data.vk}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-2 bg-white rounded-lg w-10 h-10 flex items-center justify-center"
+                    >
+                      <svg
+                        xmlns="https://www.w3.org/2000/svg"
+                        viewBox="0 0 640 640"
+                        fill="currentColor"
+                        className="w-6 h-6"
+                      >
+                        <path d="M127.5 127.5C96 159 96 209.7 96 311L96 329C96 430.3 96 481 127.5 512.5C159 544 209.7 544 311 544L328.9 544C430.3 544 481 544 512.4 512.5C543.8 481 544 430.3 544 329L544 311.1C544 209.7 544 159 512.5 127.6C481 96.2 430.3 96 329 96L311 96C209.7 96 159 96 127.5 127.5zM171.6 232.3L222.7 232.3C224.4 317.8 262.1 354 292 361.5L292 232.3L340.2 232.3L340.2 306C369.7 302.8 400.7 269.2 411.1 232.3L459.3 232.3C455.4 251.5 447.5 269.6 436.2 285.6C424.9 301.6 410.5 315.1 393.7 325.2C412.4 334.5 428.9 347.6 442.1 363.7C455.3 379.8 465 398.6 470.4 418.7L417.4 418.7C412.5 401.2 402.6 385.6 388.8 373.7C375 361.8 358.1 354.3 340.1 352.1L340.1 418.7L334.3 418.7C232.2 418.7 174 348.7 171.5 232.2z" />
+                      </svg>
+                    </a>
+                  )}
                 </div>
-              )}
+              </div>
+            </div>
+
+            <div className="hidden md:block bg-white rounded-b-[18px] p-8">
+              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+                <div className="flex-1 space-y-6">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h1 className="text-3xl font-bold text-gray-900">{data.name}</h1>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {data.type && <Badge className="bg-[#90FF55] text-black">{data.type}</Badge>}
+                      {data.features.map((feature) => (
+                        <Badge key={feature} className="bg-yellow-300 text-black">
+                          {feature}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Описание</span>
+                    <p className="text-base leading-relaxed text-gray-700">
+                      {data.description || "Нет описания"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                      График работы
+                    </h3>
+                    <div className="mt-3 text-base text-gray-800">{formatHours(data.hours)}</div>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <div className="rounded-xl border border-gray-100 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Город</p>
+                        <p className="mt-2 text-base text-gray-900">{data.city?.trim() || "—"}</p>
+                      </div>
+                      <div className="rounded-xl border border-gray-100 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Адрес</p>
+                        <p className="mt-2 text-base text-gray-900">
+                          {addressWithoutCity ||
+                            normalizedAddress.remainder ||
+                            normalizedAddress.full ||
+                            data.address?.trim() ||
+                            "—"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-gray-100 bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Телефон</p>
+                        <p className="mt-2 text-base text-gray-900">{data.phone?.trim() || "—"}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-4">
+                    {data.instagram && (
+                      <a
+                        href={data.instagram}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:text-black"
+                      >
+                        <Instagram className="h-5 w-5" />
+                      </a>
+                    )}
+                    {data.telegram && (
+                      <a
+                        href={`https://t.me/${data.telegram}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:text-black"
+                      >
+                        <Send className="h-5 w-5" />
+                      </a>
+                    )}
+                    {data.whatsapp && (
+                      <a
+                        href={`https://wa.me/${data.whatsapp}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:text-black"
+                      >
+                        <svg
+                          xmlns="https://www.w3.org/2000/svg"
+                          viewBox="0 0 640 640"
+                          fill="currentColor"
+                          className="h-5 w-5"
+                        >
+                          <path d="M476.9 161.1C435 119.1 379.2 96 319.9 96C197.5 96 97.9 195.6 97.9 318C97.9 357.1 108.1 395.3 127.5 429L96 544L213.7 513.1C246.1 530.8 282.6 540.1 319.8 540.1L319.9 540.1C442.2 540.1 544 440.5 544 318.1C544 258.8 518.8 203.1 476.9 161.1zM319.9 502.7C286.7 502.7 254.2 493.8 225.9 477L219.2 473L149.4 491.3L168 423.2L163.6 416.2C145.1 386.8 135.4 352.9 135.4 318C135.4 216.3 218.2 133.5 320 133.5C369.3 133.5 415.6 152.7 450.4 187.6C485.2 222.5 506.6 268.8 506.5 318.1C506.5 419.9 421.6 502.7 319.9 502.7zM421.1 364.5C415.6 361.7 388.3 348.3 383.2 346.5C378.1 344.6 374.4 343.7 370.7 349.3C367 354.9 356.4 367.3 353.1 371.1C349.9 374.8 346.6 375.3 341.1 372.5C308.5 356.2 287.1 343.4 265.6 306.5C259.9 296.7 271.3 297.4 281.9 276.2C283.7 272.5 282.8 269.3 281.4 266.5C280 263.7 268.9 236.4 264.3 225.3C259.8 214.5 255.2 216 251.8 215.8C248.6 215.6 244.9 215.6 241.2 215.6C237.5 215.6 231.5 217 226.4 222.5C221.3 228.1 207 241.5 207 268.8C207 296.1 226.9 322.5 229.6 326.2C232.4 329.9 268.7 385.9 324.4 410C359.6 425.2 373.4 426.5 391 423.9C401.7 422.3 423.8 410.5 428.4 397.5C433 384.5 433 373.4 431.6 371.1C430.3 368.6 426.6 367.2 421.1 364.5z" />
+                        </svg>
+                      </a>
+                    )}
+                    {data.vk && (
+                      <a
+                        href={data.vk}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:text-black"
+                      >
+                        <svg
+                          xmlns="https://www.w3.org/2000/svg"
+                          viewBox="0 0 640 640"
+                          fill="currentColor"
+                          className="h-5 w-5"
+                        >
+                          <path d="M127.5 127.5C96 159 96 209.7 96 311L96 329C96 430.3 96 481 127.5 512.5C159 544 209.7 544 311 544L328.9 544C430.3 544 481 544 512.4 512.5C543.8 481 544 430.3 544 329L544 311.1C544 209.7 544 159 512.5 127.6C481 96.2 430.3 96 329 96L311 96C209.7 96 159 96 127.5 127.5zM171.6 232.3L222.7 232.3C224.4 317.8 262.1 354 292 361.5L292 232.3L340.2 232.3L340.2 306C369.7 302.8 400.7 269.2 411.1 232.3L459.3 232.3C455.4 251.5 447.5 269.6 436.2 285.6C424.9 301.6 410.5 315.1 393.7 325.2C412.4 334.5 428.9 347.6 442.1 363.7C455.3 379.8 465 398.6 470.4 418.7L417.4 418.7C412.5 401.2 402.6 385.6 388.8 373.7C375 361.8 358.1 354.3 340.1 352.1L340.1 418.7L334.3 418.7C232.2 418.7 174 348.7 171.5 232.2z" />
+                        </svg>
+                      </a>
+                    )}
+                  </div>
+                </div>
+                {data.photo && (
+                  <div className="w-full max-w-xs shrink-0 self-start">
+                    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 p-2">
+                      <img
+                        src={data.photo}
+                        alt={data.name || "Фото заведения"}
+                        width={288}
+                        height={288}
+                        loading="lazy"
+                        decoding="async"
+                        className="h-72 w-full rounded-xl object-cover"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

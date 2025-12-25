@@ -212,6 +212,23 @@ SUBSCRIPTION_PLANS_DATA = [
         ],
         "is_hidden": True,
     },
+    {
+        "code": "internal",
+        "name": "Технический",
+        "description": "Внутренний тариф для тестов без ограничений по времени.",
+        "price": 0,
+        "currency": "RUB",
+        "duration_days": None,
+        "category_limit": None,
+        "item_limit": None,
+        "is_full_access": True,
+        "is_trial": False,
+        "features": [
+            "Полный доступ без ограничений",
+            "Внутренний технический доступ",
+        ],
+        "is_hidden": True,
+    },
 ]
 
 
@@ -4076,6 +4093,48 @@ def grant_trial_subscription(restaurant_id: int, current_user: dict = Depends(ge
         currency=plan.get("currency", "RUB"),
     )
 
+    subscription = get_active_subscription(restaurant_id)
+    return {
+        "status": "active",
+        "subscription": format_subscription_payload(subscription),
+        "limits": get_subscription_limits(restaurant_id),
+    }
+
+
+@app.get("/api/admin/restaurants/{restaurant_id}/subscription/grant-internal")
+def grant_internal_subscription(restaurant_id: int, current_user: dict = Depends(get_current_user)):
+    ensure_admin_access(current_user["email"])
+
+    plan = get_subscription_plan_by_code("internal")
+    if not plan:
+        raise HTTPException(status_code=500, detail="Тариф 'технический' не найден")
+
+    ensure_base_subscription(restaurant_id)
+    active = get_active_subscription(restaurant_id)
+    if active and active.get("plan_code") == plan["code"]:
+        return {
+            "status": "active",
+            "subscription": format_subscription_payload(active),
+            "limits": get_subscription_limits(restaurant_id),
+        }
+
+    subscription_id = create_subscription_record(
+        restaurant_id=restaurant_id,
+        plan_code=plan["code"],
+        status="active",
+        amount=0,
+        currency=plan.get("currency", "RUB"),
+        started_at=datetime.utcnow(),
+        expires_at=None,
+    )
+    set_subscription_active(
+        subscription_id=subscription_id,
+        restaurant_id=restaurant_id,
+        plan=plan,
+        amount=0,
+        currency=plan.get("currency", "RUB"),
+        payment_id=None,
+    )
     subscription = get_active_subscription(restaurant_id)
     return {
         "status": "active",
