@@ -257,7 +257,11 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const initialFormState = {
     name: '',
     phone: '',
-    address: '',
+    city: '',
+    street: '',
+    house: '',
+    building: '',
+    entrance: '',
     apartment: '',
     comment: '',
     paymentMethod: 'cash',
@@ -270,6 +274,35 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     [data?.currency]
   );
   const formatPrice = useCallback((amount: number) => `${amount} ${currencySymbol}`, [currencySymbol]);
+  const formatPhone = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, "");
+    if (!digits) return "";
+    let normalized = digits;
+    if (normalized.startsWith("8")) {
+      normalized = `7${normalized.slice(1)}`;
+    }
+    if (!normalized.startsWith("7")) {
+      normalized = `7${normalized}`;
+    }
+    const numbers = normalized.slice(1, 11);
+    let result = "+7";
+    if (numbers.length > 0) {
+      result += ` (${numbers.slice(0, 3)}`;
+    }
+    if (numbers.length >= 3) {
+      result += ")";
+    }
+    if (numbers.length > 3) {
+      result += ` ${numbers.slice(3, 6)}`;
+    }
+    if (numbers.length > 6) {
+      result += `-${numbers.slice(6, 8)}`;
+    }
+    if (numbers.length > 8) {
+      result += `-${numbers.slice(8, 10)}`;
+    }
+    return result;
+  }, []);
 
   const cartKey = `taam_cart_${activeTeam}`;
   const normalizedSearch = searchValue.trim().toLowerCase();
@@ -590,11 +623,14 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     if (!supportsScheduled && deliveryTime === 'scheduled' && supportsAsap) {
       setDeliveryTime('asap');
     }
+  }, [currentMethodSettings?.allow_asap, currentMethodSettings?.allow_scheduled, deliveryTime]);
 
-    if (deliveryMethod === 'pickup') {
-      setFormData((prev) => ({ ...prev, address: prev.address || addressWithoutCity }));
+  useEffect(() => {
+    if (deliveryMethod !== 'delivery') return;
+    if (data?.city && !formData.city.trim()) {
+      setFormData((prev) => ({ ...prev, city: data.city?.trim() || '' }));
     }
-  }, [currentMethodSettings?.allow_asap, currentMethodSettings?.allow_scheduled, deliveryMethod, addressWithoutCity, deliveryTime]);
+  }, [data?.city, deliveryMethod, formData.city]);
 
   useEffect(() => {
     if (!availablePaymentMethods.includes(formData.paymentMethod as PaymentMethod)) {
@@ -604,14 +640,28 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
   const trimmedName = formData.name.trim();
   const trimmedPhone = formData.phone.trim();
-  const trimmedAddress = formData.address.trim();
+  const trimmedCity = formData.city.trim();
+  const trimmedStreet = formData.street.trim();
+  const trimmedHouse = formData.house.trim();
   const trimmedDesiredTime = formData.desiredTime.trim();
+  const formattedDeliveryAddress = [
+    trimmedCity && `г. ${trimmedCity}`,
+    trimmedStreet && `ул. ${trimmedStreet}`,
+    trimmedHouse && `д. ${trimmedHouse}`,
+    formData.building.trim() && `корп. ${formData.building.trim()}`,
+    formData.entrance.trim() && `подъезд ${formData.entrance.trim()}`,
+    formData.apartment.trim() && `кв. ${formData.apartment.trim()}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const trimmedAddress = formattedDeliveryAddress.trim();
+  const hasDeliveryAddress = Boolean(trimmedCity && trimmedStreet && trimmedHouse);
   const canSubmitOrder = Boolean(
     cartDetails.length > 0 &&
     currentMethodSettings?.enabled &&
     trimmedName &&
     trimmedPhone &&
-    (deliveryMethod === 'pickup' || trimmedAddress) &&
+    (deliveryMethod === 'pickup' || hasDeliveryAddress) &&
     (deliveryTime !== 'scheduled' || trimmedDesiredTime)
   );
 
@@ -1044,7 +1094,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
             {cartStep === 1 && (
               <div className="space-y-4">
-                <div className="max-h-[40vh] overflow-y-auto space-y-3 pr-2 scrollbar-thin">
+                <div className="max-h-[40vh] overflow-y-auto space-y-3 pr-2 scrollbar-visible">
                   {cartDetails.map(item => (
                     <div key={item.id} className="flex gap-3 bg-gray-50 p-3 rounded-2xl">
                       <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden shrink-0">
@@ -1076,96 +1126,98 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
             )}
 
             {cartStep === 2 && (
-              <div className="space-y-6 max-h-[70vh] overflow-y-auto px-1 scrollbar-hide pb-4">
-                <Tabs value={deliveryMethod} className="w-full" onValueChange={(v) => {
-                  const method = v as 'delivery' | 'pickup';
-                  if (!deliverySettings[method]?.enabled) return;
-                  setDeliveryMethod(method);
-                }}>
-                  <TabsList className="grid grid-cols-2 mb-4 bg-gray-100 p-1 rounded-xl h-12">
-                    <TabsTrigger value="delivery" disabled={!deliverySettings.delivery.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Доставка</TabsTrigger>
-                    <TabsTrigger value="pickup" disabled={!deliverySettings.pickup.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Самовывоз</TabsTrigger>
-                  </TabsList>
-                </Tabs>
+              <div className="flex flex-col max-h-[70vh]">
+                <div className="flex-1 space-y-6 overflow-y-auto px-1 scrollbar-hide pb-4">
+                  <Tabs value={deliveryMethod} className="w-full" onValueChange={(v) => {
+                    const method = v as 'delivery' | 'pickup';
+                    if (!deliverySettings[method]?.enabled) return;
+                    setDeliveryMethod(method);
+                  }}>
+                    <TabsList className="grid grid-cols-2 mb-4 bg-gray-100 p-1 rounded-xl h-12">
+                      <TabsTrigger value="delivery" disabled={!deliverySettings.delivery.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Доставка</TabsTrigger>
+                      <TabsTrigger value="pickup" disabled={!deliverySettings.pickup.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Самовывоз</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
 
-                <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-xs uppercase font-semibold text-gray-500">{deliveryMethod === 'delivery' ? 'Стоимость доставки' : 'Самовывоз'}</p>
-                      <p className="text-lg font-semibold">
-                        {deliveryMethod === 'delivery'
-                          ? currentMethodSettings.cost_info || 'Стоимость рассчитывается по вашим тарифам'
-                          : currentMethodSettings.discount_percent
-                            ? `Скидка ${currentMethodSettings.discount_percent}% на самовывоз`
-                            : 'Готовим к вашему приезду'}
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="px-3 py-1 rounded-full text-xs">
-                      {deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}
-                    </Badge>
-                  </div>
-
-                  {currentMethodSettings.message && (
-                    <Alert className="bg-white/70 border-dashed">
-                      <AlertDescription className="text-sm">
-                        {currentMethodSettings.message}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  <div className="rounded-xl border bg-white p-3">
-                    <p className="text-xs uppercase font-semibold text-gray-500 mb-2">Режим работы</p>
-                    <div className="text-sm text-gray-800 space-y-1">
-                      {formatHours(data.hours)}
-                    </div>
-                  </div>
-
-                  {deliveryMethod === 'pickup' && currentMethodSettings.asap_time_hint && (
-                    <div className="text-sm text-muted-foreground">
-                      {currentMethodSettings.asap_time_hint}
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-3">
-                  <Label className="text-xs font-bold uppercase text-gray-400">Время получения</Label>
-                  <RadioGroup value={deliveryTime} onValueChange={(v) => setDeliveryTime(v as 'asap' | 'scheduled')} className="flex flex-col gap-2">
-                    {currentMethodSettings.allow_asap && (
-                      <div className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", deliveryTime === 'asap' ? "border-black bg-gray-50" : "bg-white")}>
-                        <RadioGroupItem value="asap" id="asap" />
-                        <div className="flex-1">
-                          <Label htmlFor="asap" className="flex-1 cursor-pointer font-medium">Как можно скорее</Label>
-                          <p className="text-xs text-muted-foreground">Мы начнем готовить сразу после подтверждения</p>
-                        </div>
+                  <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <p className="text-xs uppercase font-semibold text-gray-500">{deliveryMethod === 'delivery' ? 'Стоимость доставки' : 'Самовывоз'}</p>
+                        <p className="text-lg font-semibold">
+                          {deliveryMethod === 'delivery'
+                            ? currentMethodSettings.cost_info || 'Стоимость рассчитывается по вашим тарифам'
+                            : currentMethodSettings.discount_percent
+                              ? `Скидка ${currentMethodSettings.discount_percent}% на самовывоз`
+                              : 'Готовим к вашему приезду'}
+                        </p>
                       </div>
+                      <Badge variant="secondary" className="px-3 py-1 rounded-full text-xs">
+                        {deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}
+                      </Badge>
+                    </div>
+
+                    {currentMethodSettings.message && (
+                      <Alert className="bg-white/70 border-dashed">
+                        <AlertDescription className="text-sm">
+                          {currentMethodSettings.message}
+                        </AlertDescription>
+                      </Alert>
                     )}
 
-                    {currentMethodSettings.allow_scheduled && (
-                      <div className={cn("space-y-2 p-3 rounded-xl border transition-all", deliveryTime === 'scheduled' ? "border-black bg-gray-50" : "bg-white")}>
-                        <div className="flex items-center space-x-3">
-                          <RadioGroupItem value="scheduled" id="scheduled" />
+                    <div className="rounded-xl border bg-white p-3">
+                      <p className="text-xs uppercase font-semibold text-gray-500 mb-2">Режим работы</p>
+                      <div className="text-sm text-gray-800 space-y-1">
+                        {formatHours(data.hours)}
+                      </div>
+                    </div>
+
+                    {deliveryMethod === 'pickup' && currentMethodSettings.asap_time_hint && (
+                      <div className="text-sm text-muted-foreground">
+                        {currentMethodSettings.asap_time_hint}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    <Label className="text-xs font-bold uppercase text-gray-400">Время получения</Label>
+                    <RadioGroup value={deliveryTime} onValueChange={(v) => setDeliveryTime(v as 'asap' | 'scheduled')} className="flex flex-col gap-2">
+                      {currentMethodSettings.allow_asap && (
+                        <div className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", deliveryTime === 'asap' ? "border-black bg-gray-50" : "bg-white")}>
+                          <RadioGroupItem value="asap" id="asap" />
                           <div className="flex-1">
-                            <Label htmlFor="scheduled" className="font-medium cursor-pointer">К времени</Label>
-                            <p className="text-xs text-muted-foreground">Выберите удобное время, мы подстроимся</p>
+                            <Label htmlFor="asap" className="flex-1 cursor-pointer font-medium">Как можно скорее</Label>
+                            <p className="text-xs text-muted-foreground">Мы начнем готовить сразу после подтверждения</p>
                           </div>
                         </div>
-                        <Input
-                          placeholder="Например, 18:30"
-                          value={formData.desiredTime}
-                          onChange={(e) => setFormData((f) => ({ ...f, desiredTime: e.target.value }))}
-                          disabled={deliveryTime !== 'scheduled'}
-                          className="rounded-xl h-11"
-                        />
-                      </div>
-                    )}
+                      )}
 
-                    {!currentMethodSettings.allow_asap && !currentMethodSettings.allow_scheduled && (
-                      <div className="text-sm text-red-500">Способ временно недоступен</div>
-                    )}
-                  </RadioGroup>
+                      {currentMethodSettings.allow_scheduled && (
+                        <div className={cn("space-y-2 p-3 rounded-xl border transition-all", deliveryTime === 'scheduled' ? "border-black bg-gray-50" : "bg-white")}>
+                          <div className="flex items-center space-x-3">
+                            <RadioGroupItem value="scheduled" id="scheduled" />
+                            <div className="flex-1">
+                              <Label htmlFor="scheduled" className="font-medium cursor-pointer">К времени</Label>
+                              <p className="text-xs text-muted-foreground">Выберите удобное время, мы подстроимся</p>
+                            </div>
+                          </div>
+                          <Input
+                            placeholder="Например, 18:30"
+                            value={formData.desiredTime}
+                            onChange={(e) => setFormData((f) => ({ ...f, desiredTime: e.target.value }))}
+                            disabled={deliveryTime !== 'scheduled'}
+                            className="rounded-xl h-11"
+                          />
+                        </div>
+                      )}
+
+                      {!currentMethodSettings.allow_asap && !currentMethodSettings.allow_scheduled && (
+                        <div className="text-sm text-red-500">Способ временно недоступен</div>
+                      )}
+                    </RadioGroup>
+                  </div>
                 </div>
 
-                <div className="pt-2 border-t flex flex-col gap-3">
+                <div className="pt-2 border-t flex flex-col gap-3 px-1 bg-white">
                   <Button
                     disabled={!currentMethodSettings.enabled || (!currentMethodSettings.allow_asap && !currentMethodSettings.allow_scheduled)}
                     className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"
@@ -1179,63 +1231,90 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
             )}
 
             {cartStep === 3 && (
-              <div className="space-y-6 max-h-[65vh] overflow-y-auto px-1 scrollbar-hide pb-4">
-                <div className="rounded-2xl border bg-gray-50 p-3 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Способ получения</span>
-                    <button onClick={() => setCartStep(2)} className="text-xs font-medium text-primary">Изменить</button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold">{deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span>
-                    <Badge variant="secondary" className="text-[11px] px-2 py-1">
-                      {deliveryTime === 'asap' ? 'Как можно скорее' : `К времени: ${trimmedDesiredTime || 'указать'}`}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {deliveryMethod === 'delivery'
-                      ? (trimmedAddress || 'Укажите адрес доставки ниже')
-                      : `Заберёте в: ${addressWithoutCity || data.address}`}
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5 flex-1">
-                      <Label className="text-xs text-gray-500 ml-1">Имя</Label>
-                      <Input placeholder="Как вас зовут?" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} className="rounded-xl h-11" />
+              <div className="flex flex-col max-h-[65vh]">
+                <div className="flex-1 space-y-6 overflow-y-auto px-1 scrollbar-hide pb-4">
+                  <div className="rounded-2xl border bg-gray-50 p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Способ получения</span>
+                      <button onClick={() => setCartStep(2)} className="text-xs font-medium text-primary">Изменить</button>
                     </div>
-                    <div className="space-y-1.5 flex-1">
-                      <Label className="text-xs text-gray-500 ml-1">Телефон</Label>
-                      <Input placeholder="+7 (___) ___" value={formData.phone} onChange={e => setFormData(f => ({ ...f, phone: e.target.value }))} className="rounded-xl h-11" />
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">{deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span>
+                      <Badge variant="secondary" className="text-[11px] px-2 py-1">
+                        {deliveryTime === 'asap' ? 'Как можно скорее' : `К времени: ${trimmedDesiredTime || 'указать'}`}
+                      </Badge>
                     </div>
+                    <p className="text-sm text-muted-foreground">
+                      {deliveryMethod === 'delivery'
+                        ? (trimmedAddress || 'Укажите адрес доставки ниже')
+                        : `Заберёте в: ${addressWithoutCity || data.address}`}
+                    </p>
                   </div>
 
-                  {deliveryMethod === 'delivery' && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-gray-500 ml-1">Адрес доставки</Label>
-                      <Input placeholder="Улица, дом, подъезд" value={formData.address} onChange={e => setFormData(f => ({ ...f, address: e.target.value }))} className="rounded-xl h-11" />
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5 flex-1">
+                        <Label className="text-xs text-gray-500 ml-1">Имя</Label>
+                        <Input placeholder="Как вас зовут?" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} className="rounded-xl h-11" />
+                      </div>
+                      <div className="space-y-1.5 flex-1">
+                        <Label className="text-xs text-gray-500 ml-1">Телефон</Label>
+                        <Input
+                          placeholder="+7 (___) ___-__-__"
+                          value={formData.phone}
+                          inputMode="tel"
+                          onChange={e => setFormData(f => ({ ...f, phone: formatPhone(e.target.value) }))}
+                          className="rounded-xl h-11"
+                        />
+                      </div>
                     </div>
-                  )}
 
-                  <div className="space-y-3">
-                    <Label className="text-xs font-bold uppercase text-gray-400">Способ оплаты</Label>
-                    <RadioGroup value={formData.paymentMethod} onValueChange={v => setFormData(f => ({ ...f, paymentMethod: v }))} className="flex flex-col gap-2">
-                      {availablePaymentMethods.map((method) => (
-                        <div key={method} className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", formData.paymentMethod === method ? "border-black bg-gray-50" : "bg-white")}>
-                          <RadioGroupItem value={method} id={`pay-${method}`} />
-                          <Label htmlFor={`pay-${method}`} className="flex-1 cursor-pointer font-medium">{paymentLabels[method]}</Label>
+                    {deliveryMethod === 'delivery' && (
+                      <div className="space-y-2">
+                        <Label className="text-xs text-gray-500 ml-1">Адрес доставки</Label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5 col-span-2">
+                            <Input placeholder="Город" value={formData.city} onChange={e => setFormData(f => ({ ...f, city: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
+                          <div className="space-y-1.5 col-span-2">
+                            <Input placeholder="Улица" value={formData.street} onChange={e => setFormData(f => ({ ...f, street: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Input placeholder="Дом" value={formData.house} onChange={e => setFormData(f => ({ ...f, house: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Input placeholder="Корпус (необязательно)" value={formData.building} onChange={e => setFormData(f => ({ ...f, building: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Input placeholder="Подъезд" value={formData.entrance} onChange={e => setFormData(f => ({ ...f, entrance: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Input placeholder="Квартира" value={formData.apartment} onChange={e => setFormData(f => ({ ...f, apartment: e.target.value }))} className="rounded-xl h-11" />
+                          </div>
                         </div>
-                      ))}
-                    </RadioGroup>
-                  </div>
+                      </div>
+                    )}
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-gray-500 ml-1">Комментарий к заказу</Label>
-                    <Textarea placeholder="Пожелания, код домофона и т.д." value={formData.comment} onChange={e => setFormData(f => ({ ...f, comment: e.target.value }))} className="rounded-xl resize-none" rows={2} />
+                    <div className="space-y-3">
+                      <Label className="text-xs font-bold uppercase text-gray-400">Способ оплаты</Label>
+                      <RadioGroup value={formData.paymentMethod} onValueChange={v => setFormData(f => ({ ...f, paymentMethod: v }))} className="flex flex-col gap-2">
+                        {availablePaymentMethods.map((method) => (
+                          <div key={method} className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", formData.paymentMethod === method ? "border-black bg-gray-50" : "bg-white")}>
+                            <RadioGroupItem value={method} id={`pay-${method}`} />
+                            <Label htmlFor={`pay-${method}`} className="flex-1 cursor-pointer font-medium">{paymentLabels[method]}</Label>
+                          </div>
+                        ))}
+                      </RadioGroup>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-gray-500 ml-1">Комментарий к заказу</Label>
+                      <Textarea placeholder="Пожелания, код домофона и т.д." value={formData.comment} onChange={e => setFormData(f => ({ ...f, comment: e.target.value }))} className="rounded-xl resize-none" rows={2} />
+                    </div>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t flex flex-col gap-3">
+                <div className="pt-2 border-t flex flex-col gap-3 px-1 bg-white">
                   <Button
                     disabled={isSubmitting || !canSubmitOrder}
                     className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"

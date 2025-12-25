@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { Search, Filter, Eye, Clock, ChefHat, Package, Truck, CheckCircle2, XCircle, Loader2 } from "lucide-react"
+import { useSearchParams } from "next/navigation"
+import { Search, Filter, Eye, Clock, ChefHat, Package, Truck, CheckCircle2, XCircle, Loader2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Input } from "@/components/ui/input"
@@ -77,6 +78,9 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
     const [searchQuery, setSearchQuery] = useState("")
     const [statusFilter, setStatusFilter] = useState<string>("all")
     const [updatingStatus, setUpdatingStatus] = useState(false)
+    const searchParams = useSearchParams()
+    const orderIdParam = searchParams.get("orderId")
+    const orderNumberParam = searchParams.get("orderNumber")
 
     const loadOrders = useCallback(async () => {
         if (!activeTeam) return
@@ -99,6 +103,27 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
     useEffect(() => {
         loadOrders()
     }, [loadOrders])
+
+    useEffect(() => {
+        if (!orderIdParam && !orderNumberParam) return
+        setStatusFilter("all")
+        setSearchQuery("")
+    }, [orderIdParam, orderNumberParam])
+
+    useEffect(() => {
+        if (!orderIdParam && !orderNumberParam) return
+        const orderId = orderIdParam ? Number(orderIdParam) : null
+        const match = orderId
+            ? orders.find((order) => order.id === orderId)
+            : orders.find((order) => order.number === orderNumberParam)
+        if (match) {
+            setSelectedOrder(match)
+        }
+    }, [orderIdParam, orderNumberParam, orders])
+
+    const toggleSelectedOrder = (order: Order) => {
+        setSelectedOrder((prev) => (prev?.id === order.id ? null : order))
+    }
 
     const handleStatusChange = async (orderId: number, newStatus: string) => {
         setUpdatingStatus(true)
@@ -141,9 +166,9 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
     }
 
     return (
-        <div className="flex flex-1 flex-col xl:flex-row gap-6 p-4 xl:h-[calc(100vh-120px)]">
+        <div className="flex flex-1 flex-col gap-6 p-4 xl:h-[calc(100vh-120px)]">
             {/* Orders List */}
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 relative">
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-4 mb-4">
                     <div className="relative flex-1">
@@ -205,7 +230,7 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                                         <TableRow
                                             key={order.id}
                                             className={`cursor-pointer hover:bg-muted/50 ${selectedOrder?.id === order.id ? "bg-muted" : ""}`}
-                                            onClick={() => setSelectedOrder(order)}
+                                            onClick={() => toggleSelectedOrder(order)}
                                         >
                                             <TableCell className="font-medium">#{order.number}</TableCell>
                                             <TableCell>
@@ -219,7 +244,7 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                                             <TableCell>{order.customer_name}</TableCell>
                                             <TableCell>{order.payment_method}</TableCell>
                                             <TableCell>
-                                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setSelectedOrder(order); }}>
+                                                <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); toggleSelectedOrder(order); }}>
                                                     <Eye className="size-4" />
                                                 </Button>
                                             </TableCell>
@@ -234,192 +259,199 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
 
             {/* Order Detail Panel */}
             {selectedOrder && (
-                <Card className="w-full xl:w-[420px] max-w-full xl:shrink-0 flex flex-col overflow-hidden">
-                    <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-xl">Заказ №{selectedOrder.number}</CardTitle>
-                            <Badge className={STATUS_COLORS[selectedOrder.status]}>
-                                {STATUS_LABELS[selectedOrder.status]}
-                            </Badge>
-                        </div>
-                    </CardHeader>
-
-                    <ScrollArea className="flex-1 max-h-[70vh] xl:max-h-[calc(100vh-240px)]">
-                        <CardContent className="space-y-6">
-                            {/* Dates */}
-                            <div className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Заказ создан:</span>
-                                    <span>{formatDate(selectedOrder.created_at)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Последнее обновление:</span>
-                                    <span>{formatDate(selectedOrder.updated_at)}</span>
-                                </div>
-                            </div>
-
-                            <Separator />
-
-                            {/* Delivery Info */}
-                            <div>
-                                <h4 className="font-semibold mb-3">Информация о доставке</h4>
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Способ доставки:</span>
-                                        <span>{selectedOrder.delivery_method}</span>
-                                    </div>
-                                    {selectedOrder.delivery_time && (
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Время доставки:</span>
-                                            <span>{selectedOrder.delivery_time}</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <Separator />
-
-                            {/* Payment Info */}
-                            <div>
-                                <h4 className="font-semibold mb-3">Информация об оплате</h4>
-                                <div className="text-sm">
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Способ оплаты:</span>
-                                        <span>{selectedOrder.payment_method}</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <Separator />
-
-                            {/* Guest Info */}
-                            <div>
-                                <h4 className="font-semibold mb-3">Данные гостя</h4>
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Имя гостя:</span>
-                                        <span>{selectedOrder.customer_name}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Номер телефона:</span>
-                                        <span>{selectedOrder.customer_phone}</span>
-                                    </div>
-                                    {selectedOrder.delivery_address && (
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Адрес доставки:</span>
-                                            <span className="text-right max-w-[200px]">{selectedOrder.delivery_address}</span>
-                                        </div>
-                                    )}
-                                    {selectedOrder.delivery_zone && (
-                                        <div className="flex justify-between">
-                                            <span className="text-muted-foreground">Зона доставки:</span>
-                                            <span>{selectedOrder.delivery_zone}</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {selectedOrder.comment && (
-                                <>
-                                    <Separator />
-                                    <div>
-                                        <h4 className="font-semibold mb-2">Внутренний комментарий</h4>
-                                        <p className="text-sm text-muted-foreground">{selectedOrder.comment || "—"}</p>
-                                    </div>
-                                </>
-                            )}
-
-                            <Separator />
-
-                            {/* Items */}
-                            <div>
-                                <h4 className="font-semibold mb-3">Позиции</h4>
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Название</TableHead>
-                                            <TableHead className="text-center">Кол-во</TableHead>
-                                            <TableHead className="text-right">Цена</TableHead>
-                                            <TableHead className="text-right">Итого</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {selectedOrder.items.map((item) => {
-                                            const price = toNumber(item.price)
-                                            const quantity = toNumber(item.quantity)
-                                            const total = toNumber(item.total, price * quantity)
-
-                                            return (
-                                                <TableRow key={item.id}>
-                                                    <TableCell className="whitespace-normal break-words max-w-[220px]">{item.name}</TableCell>
-                                                    <TableCell className="text-center">{quantity}</TableCell>
-                                                    <TableCell className="text-right">{formatCurrency(price)}</TableCell>
-                                                    <TableCell className="text-right">{formatCurrency(total)}</TableCell>
-                                                </TableRow>
-                                            )
-                                        })}
-                                    </TableBody>
-                                </Table>
-                            </div>
-
-                            {/* Totals */}
-                            <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
-                                {(() => {
-                                    const orderAmount = toNumber(selectedOrder.amount)
-                                    const deliveryCost = toNumber(selectedOrder.delivery_cost)
-                                    const itemsCost = Math.max(orderAmount - deliveryCost, 0)
-
-                                    return (
-                                        <>
-                                            <div className="flex justify-between">
-                                                <span>Стоимость заказа:</span>
-                                                <span>{formatCurrency(itemsCost)}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span>Стоимость доставки:</span>
-                                                <span>{formatCurrency(deliveryCost)}</span>
-                                            </div>
-                                            <Separator />
-                                            <div className="flex justify-between font-bold text-base">
-                                                <span>Итого:</span>
-                                                <span>{formatCurrency(orderAmount)}</span>
-                                            </div>
-                                        </>
-                                    )
-                                })()}
-                            </div>
-
-                            {/* Actions */}
-                            {selectedOrder.status !== 'delivered' && selectedOrder.status !== 'canceled' && (
-                                <div className="flex gap-3">
-                                    {selectedOrder.status === 'pending' && (
-                                        <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'cooking')} disabled={updatingStatus}>
-                                            Начать готовку
-                                        </Button>
-                                    )}
-                                    {selectedOrder.status === 'cooking' && (
-                                        <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'ready')} disabled={updatingStatus}>
-                                            Заказ готов
-                                        </Button>
-                                    )}
-                                    {selectedOrder.status === 'ready' && (
-                                        <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'courier')} disabled={updatingStatus}>
-                                            Передан курьеру
-                                        </Button>
-                                    )}
-                                    {selectedOrder.status === 'courier' && (
-                                        <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'delivered')} disabled={updatingStatus}>
-                                            Доставлен
-                                        </Button>
-                                    )}
-                                    <Button variant="destructive" onClick={() => handleCancelOrder(selectedOrder.id)} disabled={updatingStatus}>
-                                        Отменить
+                <div className="absolute inset-0 z-20 pointer-events-none">
+                    <Card className="absolute inset-4 ml-auto w-full max-w-[420px] flex flex-col overflow-hidden pointer-events-auto">
+                        <CardHeader className="pb-3">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-xl">Заказ №{selectedOrder.number}</CardTitle>
+                                <div className="flex items-center gap-2">
+                                    <Badge className={STATUS_COLORS[selectedOrder.status]}>
+                                        {STATUS_LABELS[selectedOrder.status]}
+                                    </Badge>
+                                    <Button variant="ghost" size="icon" onClick={() => setSelectedOrder(null)}>
+                                        <X className="size-4" />
                                     </Button>
                                 </div>
-                            )}
-                        </CardContent>
-                    </ScrollArea>
-                </Card>
+                            </div>
+                        </CardHeader>
+
+                        <ScrollArea className="flex-1">
+                            <CardContent className="space-y-6">
+                                {/* Dates */}
+                                <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Заказ создан:</span>
+                                        <span>{formatDate(selectedOrder.created_at)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-muted-foreground">Последнее обновление:</span>
+                                        <span>{formatDate(selectedOrder.updated_at)}</span>
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Delivery Info */}
+                                <div>
+                                    <h4 className="font-semibold mb-3">Информация о доставке</h4>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Способ доставки:</span>
+                                            <span>{selectedOrder.delivery_method}</span>
+                                        </div>
+                                        {selectedOrder.delivery_time && (
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">Время доставки:</span>
+                                                <span>{selectedOrder.delivery_time}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Payment Info */}
+                                <div>
+                                    <h4 className="font-semibold mb-3">Информация об оплате</h4>
+                                    <div className="text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Способ оплаты:</span>
+                                            <span>{selectedOrder.payment_method}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                {/* Guest Info */}
+                                <div>
+                                    <h4 className="font-semibold mb-3">Данные гостя</h4>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Имя гостя:</span>
+                                            <span>{selectedOrder.customer_name}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Номер телефона:</span>
+                                            <span>{selectedOrder.customer_phone}</span>
+                                        </div>
+                                        {selectedOrder.delivery_address && (
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">Адрес доставки:</span>
+                                                <span className="text-right max-w-[200px]">{selectedOrder.delivery_address}</span>
+                                            </div>
+                                        )}
+                                        {selectedOrder.delivery_zone && (
+                                            <div className="flex justify-between">
+                                                <span className="text-muted-foreground">Зона доставки:</span>
+                                                <span>{selectedOrder.delivery_zone}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {selectedOrder.comment && (
+                                    <>
+                                        <Separator />
+                                        <div>
+                                            <h4 className="font-semibold mb-2">Внутренний комментарий</h4>
+                                            <p className="text-sm text-muted-foreground">{selectedOrder.comment || "—"}</p>
+                                        </div>
+                                    </>
+                                )}
+
+                                <Separator />
+
+                                {/* Items */}
+                                <div>
+                                    <h4 className="font-semibold mb-3">Позиции</h4>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Название</TableHead>
+                                                <TableHead className="text-center">Кол-во</TableHead>
+                                                <TableHead className="text-right">Цена</TableHead>
+                                                <TableHead className="text-right">Итого</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {selectedOrder.items.map((item) => {
+                                                const price = toNumber(item.price)
+                                                const quantity = toNumber(item.quantity)
+                                                const total = toNumber(item.total, price * quantity)
+
+                                                return (
+                                                    <TableRow key={item.id}>
+                                                        <TableCell className="whitespace-normal break-words max-w-[220px]">{item.name}</TableCell>
+                                                        <TableCell className="text-center">{quantity}</TableCell>
+                                                        <TableCell className="text-right">{formatCurrency(price)}</TableCell>
+                                                        <TableCell className="text-right">{formatCurrency(total)}</TableCell>
+                                                    </TableRow>
+                                                )
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+
+                                {/* Totals */}
+                                <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
+                                    {(() => {
+                                        const orderAmount = toNumber(selectedOrder.amount)
+                                        const deliveryCost = toNumber(selectedOrder.delivery_cost)
+                                        const itemsCost = Math.max(orderAmount - deliveryCost, 0)
+
+                                        return (
+                                            <>
+                                                <div className="flex justify-between">
+                                                    <span>Стоимость заказа:</span>
+                                                    <span>{formatCurrency(itemsCost)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span>Стоимость доставки:</span>
+                                                    <span>{formatCurrency(deliveryCost)}</span>
+                                                </div>
+                                                <Separator />
+                                                <div className="flex justify-between font-bold text-base">
+                                                    <span>Итого:</span>
+                                                    <span>{formatCurrency(orderAmount)}</span>
+                                                </div>
+                                            </>
+                                        )
+                                    })()}
+                                </div>
+
+                                {/* Actions */}
+                                {selectedOrder.status !== 'delivered' && selectedOrder.status !== 'canceled' && (
+                                    <div className="flex gap-3">
+                                        {selectedOrder.status === 'pending' && (
+                                            <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'cooking')} disabled={updatingStatus}>
+                                                Начать готовку
+                                            </Button>
+                                        )}
+                                        {selectedOrder.status === 'cooking' && (
+                                            <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'ready')} disabled={updatingStatus}>
+                                                Заказ готов
+                                            </Button>
+                                        )}
+                                        {selectedOrder.status === 'ready' && (
+                                            <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'courier')} disabled={updatingStatus}>
+                                                Передан курьеру
+                                            </Button>
+                                        )}
+                                        {selectedOrder.status === 'courier' && (
+                                            <Button className="flex-1" onClick={() => handleStatusChange(selectedOrder.id, 'delivered')} disabled={updatingStatus}>
+                                                Доставлен
+                                            </Button>
+                                        )}
+                                        <Button variant="destructive" onClick={() => handleCancelOrder(selectedOrder.id)} disabled={updatingStatus}>
+                                            Отменить
+                                        </Button>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </ScrollArea>
+                    </Card>
+                </div>
             )}
         </div>
     )

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Volume2, VolumeX, ChefHat, Package, Truck, Clock, CheckCircle2, Loader2, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
@@ -16,7 +17,7 @@ const STATUS_LABELS: Record<string, string> = {
     pending: "В ожидании",
     cooking: "Готовится",
     ready: "Кухня сдала",
-    courier: "У курьера"
+    courier: "У курьера/готово"
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -38,6 +39,11 @@ const normalizeOrderNumber = (order: Order & { order_number?: string }) => ({
     number: order.number || order.order_number || String(order.id)
 })
 
+const DELIVERY_METHOD_LABELS: Record<string, string> = {
+    delivery: "Доставка",
+    pickup: "Самовывоз"
+}
+
 function formatTime(dateStr: string): string {
     const date = new Date(dateStr.replace(" ", "T"))
     return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })
@@ -46,11 +52,12 @@ function formatTime(dateStr: string): string {
 export default function Terminal({ activeTeam }: { activeTeam: string }) {
     const [orders, setOrders] = useState<Order[]>([])
     const [loading, setLoading] = useState(false)
-    const [soundEnabled, setSoundEnabled] = useState(false)
+    const [soundEnabled, setSoundEnabled] = useState(true)
     const [updating, setUpdating] = useState<number | null>(null)
     const [autoRefresh, setAutoRefresh] = useState(false)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevOrderCount = useRef<number>(0)
+    const router = useRouter()
 
     const loadOrders = useCallback(async () => {
         if (!activeTeam) return
@@ -100,6 +107,15 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
         if (!soundEnabled) {
             toast.success("Звуковые уведомления включены")
         }
+    }
+
+    const openOrderInfo = (orderId: number) => {
+        if (!activeTeam) return
+        const params = new URLSearchParams()
+        params.set("block", "orders")
+        params.set("team", activeTeam)
+        params.set("orderId", String(orderId))
+        router.push(`/dashboard?${params.toString()}`)
     }
 
     if (!activeTeam) {
@@ -166,6 +182,7 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
                                 key={order.id}
                                 order={order}
                                 onStatusChange={handleStatusChange}
+                                onInfo={openOrderInfo}
                                 updating={updating === order.id}
                                 nextStatus="cooking"
                                 nextLabel="Начать готовку"
@@ -187,6 +204,7 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
                                 key={order.id}
                                 order={order}
                                 onStatusChange={handleStatusChange}
+                                onInfo={openOrderInfo}
                                 updating={updating === order.id}
                                 nextStatus="ready"
                                 nextLabel="Заказ готов"
@@ -208,9 +226,10 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
                                 key={order.id}
                                 order={order}
                                 onStatusChange={handleStatusChange}
+                                onInfo={openOrderInfo}
                                 updating={updating === order.id}
                                 nextStatus="courier"
-                                nextLabel="Передать курьеру"
+                                nextLabel={order.delivery_method === 'pickup' ? "Готово" : "Передать курьеру"}
                             />
                         ))}
                     </div>
@@ -220,7 +239,7 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
                 <div className="flex flex-col gap-3">
                     <div className="flex items-center gap-2 px-2">
                         <Truck className="size-5 text-purple-600" />
-                        <span className="font-semibold">У курьера</span>
+                        <span className="font-semibold">У курьера/готово</span>
                         <Badge variant="secondary">{ordersByStatus.courier.length}</Badge>
                     </div>
                     <div className="space-y-3 flex-1">
@@ -229,9 +248,10 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
                                 key={order.id}
                                 order={order}
                                 onStatusChange={handleStatusChange}
+                                onInfo={openOrderInfo}
                                 updating={updating === order.id}
                                 nextStatus="delivered"
-                                nextLabel="Доставлен"
+                                nextLabel={order.delivery_method === 'pickup' ? "Закрыть" : "Доставлен"}
                             />
                         ))}
                     </div>
@@ -244,12 +264,14 @@ export default function Terminal({ activeTeam }: { activeTeam: string }) {
 interface OrderCardProps {
     order: Order
     onStatusChange: (orderId: number, status: string) => void
+    onInfo: (orderId: number) => void
     updating: boolean
     nextStatus: string
     nextLabel: string
 }
 
-function OrderCard({ order, onStatusChange, updating, nextStatus, nextLabel }: OrderCardProps) {
+function OrderCard({ order, onStatusChange, onInfo, updating, nextStatus, nextLabel }: OrderCardProps) {
+    const deliveryMethodLabel = DELIVERY_METHOD_LABELS[order.delivery_method] || order.delivery_method || "—"
     return (
         <Card className={cn("border-l-4 transition-all", STATUS_COLORS[order.status])}>
             <CardHeader className="pb-2">
@@ -257,7 +279,7 @@ function OrderCard({ order, onStatusChange, updating, nextStatus, nextLabel }: O
                     <CardTitle className="text-lg">#{order.number}</CardTitle>
                     <span className="text-sm text-muted-foreground">{formatTime(order.created_at)}</span>
                 </div>
-                <CardDescription>{order.delivery_method} • {order.customer_name}</CardDescription>
+                <CardDescription>{deliveryMethodLabel} • {order.customer_name}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
                 {/* Items */}
@@ -272,18 +294,28 @@ function OrderCard({ order, onStatusChange, updating, nextStatus, nextLabel }: O
                 <Separator />
 
                 {/* Action */}
-                <Button
-                    className="w-full"
-                    size="sm"
-                    onClick={() => onStatusChange(order.id, nextStatus)}
-                    disabled={updating}
-                >
-                    {updating ? (
-                        <><Loader2 className="size-4 mr-2 animate-spin" /> Обновляем...</>
-                    ) : (
-                        <><CheckCircle2 className="size-4 mr-2" /> {nextLabel}</>
-                    )}
-                </Button>
+                <div className="flex gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => onInfo(order.id)}
+                    >
+                        Инфо
+                    </Button>
+                    <Button
+                        className="flex-[2]"
+                        size="sm"
+                        onClick={() => onStatusChange(order.id, nextStatus)}
+                        disabled={updating}
+                    >
+                        {updating ? (
+                            <><Loader2 className="size-4 mr-2 animate-spin" /> Обновляем...</>
+                        ) : (
+                            <><CheckCircle2 className="size-4 mr-2" /> {nextLabel}</>
+                        )}
+                    </Button>
+                </div>
             </CardContent>
         </Card>
     )
