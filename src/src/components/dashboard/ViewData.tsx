@@ -2,17 +2,23 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Instagram, Send, ShoppingCart } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Instagram, Send, ShoppingCart, Check, Loader2, Trash2, ArrowLeft, Plus, Minus } from "lucide-react";
+import { cn, getCurrencySymbol } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircleIcon } from "lucide-react";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
-import EditData from "./EditData";
+import GeneralInfo from "./restaurant/GeneralInfo";
+import { orderService, restaurantService, menuService } from "@/services";
+import { toast } from "sonner";
 
 interface MenuItem {
   id: number;
@@ -45,7 +51,26 @@ interface CartEntry extends CartItemDetails {
   quantity: number;
 }
 
+type PaymentMethod = "cash" | "card" | "transfer";
+
+interface DeliveryMethodSettings {
+  enabled: boolean;
+  message: string;
+  payment_methods: PaymentMethod[];
+  allow_asap: boolean;
+  allow_scheduled: boolean;
+  discount_percent?: number;
+  asap_time_hint?: string;
+  cost_info?: string;
+}
+
+interface DeliverySettingsData {
+  delivery: DeliveryMethodSettings;
+  pickup: DeliveryMethodSettings;
+}
+
 interface RestaurantData {
+  id: number;
   photo: string | null;
   name: string;
   description: string | null;
@@ -61,7 +86,30 @@ interface RestaurantData {
   phone: string | null;
   subdomain: string | null;
   type: string | null;
+  currency: string | null;
+  delivery_settings: DeliverySettingsData | string | null;
 }
+
+const defaultDeliverySettings: DeliverySettingsData = {
+  delivery: {
+    enabled: true,
+    message: "",
+    payment_methods: ["cash", "card", "transfer"],
+    allow_asap: true,
+    allow_scheduled: true,
+    cost_info: "",
+  },
+  pickup: {
+    enabled: true,
+    message: "",
+    payment_methods: ["cash", "card", "transfer"],
+    allow_asap: true,
+    allow_scheduled: true,
+    discount_percent: 0,
+    asap_time_hint: "",
+  },
+};
+
 function formatHours(hours: string | null) {
   if (!hours) return "—";
 
@@ -92,9 +140,7 @@ function formatHours(hours: string | null) {
       </div>
     );
   } catch {
-    // Старый формат: "09:00-22:00"
     const [open, close] = hours.split("-") ?? ["", ""];
-    // Положим одно и то же время на все дни, в 2 колонки
     const days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
     return (
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 md:grid-cols-3 text-sm leading-tight">
@@ -108,6 +154,12 @@ function formatHours(hours: string | null) {
     );
   }
 }
+
+const hasNutritionValue = (value?: number | null) => {
+  if (value === null || value === undefined) return false;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0;
+};
 
 const ArrowLeftIcon = () => (
   <svg
@@ -179,9 +231,6 @@ const ArrowRightIcon = () => (
   </svg>
 );
 
-const hasNutritionValue = (value?: number | null) =>
-  value !== null && value !== undefined && value !== 0;
-
 export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const [data, setData] = useState<RestaurantData | null>(null);
   const [activeCat, setActiveCat] = useState<number | null>(null);
@@ -197,6 +246,30 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   const [cartExpiresAt, setCartExpiresAt] = useState<number | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [deliverySettings, setDeliverySettings] = useState<DeliverySettingsData>(defaultDeliverySettings);
+
+  // Delivery Form State
+  const [cartStep, setCartStep] = useState(1);
+  const [deliveryMethod, setDeliveryMethod] = useState<'delivery' | 'pickup'>('delivery');
+  const [deliveryTime, setDeliveryTime] = useState<'asap' | 'scheduled'>('asap');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [orderResult, setOrderResult] = useState<{ id: number; number: string } | null>(null);
+  const initialFormState = {
+    name: '',
+    phone: '',
+    address: '',
+    apartment: '',
+    comment: '',
+    paymentMethod: 'cash',
+    desiredTime: ''
+  };
+  const [formData, setFormData] = useState(initialFormState);
+
+  const currencySymbol = useMemo(
+    () => getCurrencySymbol(data?.currency || 'RUB'),
+    [data?.currency]
+  );
+  const formatPrice = useCallback((amount: number) => `${amount} ${currencySymbol}`, [currencySymbol]);
 
   const cartKey = `taam_cart_${activeTeam}`;
   const normalizedSearch = searchValue.trim().toLowerCase();
@@ -214,32 +287,13 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   }, [data?.address]);
 
   const addressWithoutCity = useMemo(() => {
-    if (!data?.address) {
-      return "";
-    }
+    if (!data?.address) return "";
     const raw = data.address.trim();
-    if (!raw) {
-      return "";
-    }
-    const parts = raw
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    if (parts.length === 0) {
-      return "";
-    }
     const cityValue = data?.city?.trim().toLowerCase() || "";
-    if (!cityValue) {
-      return parts.join(", ");
-    }
-    const filtered = parts.filter((part) => part.toLowerCase() !== cityValue);
-    if (filtered.length === 0) {
-      return "";
-    }
-    return filtered.join(", ");
+    const parts = raw.split(",").map(p => p.trim());
+    return parts.filter(p => p.toLowerCase() !== cityValue).join(", ");
   }, [data?.address, data?.city]);
 
-  // refs для секций категорий
   const categoryRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const itemRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const menuHeaderRef = useRef<HTMLDivElement>(null);
@@ -255,47 +309,16 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     );
   };
 
-  const normalizeCart = (items: Record<number, number>) => {
-    const normalized: Record<number, number> = {};
-    Object.entries(items).forEach(([key, value]) => {
-      const id = Number(key);
-      const qty = Number(value);
-      if (!Number.isNaN(id) && qty > 0) {
-        normalized[id] = Math.floor(qty);
-      }
-    });
-    return normalized;
-  };
-
-  const saveCart = (items: Record<number, number>) => {
-    if (typeof window === "undefined") return;
-
-    if (!activeTeam) {
-      setCartExpiresAt(null);
-      localStorage.removeItem(cartKey);
-      return;
-    }
-
-    const clean = normalizeCart(items);
-
-    if (Object.keys(clean).length === 0) {
-      localStorage.removeItem(cartKey);
-      setCartExpiresAt(null);
-      return;
-    }
-
-    const expiresAt = Date.now() + 30 * 60 * 1000;
-    setCartExpiresAt(expiresAt);
-    localStorage.setItem(cartKey, JSON.stringify({ items: clean, expiresAt }));
-  };
-
   const updateCart = (
     updater: (prev: Record<number, number>) => Record<number, number>
   ) => {
     setCartItems((prev) => {
-      const updated = normalizeCart(updater(prev));
-      saveCart(updated);
-      return updated;
+      const next = updater(prev);
+      const clean: Record<number, number> = {};
+      Object.entries(next).forEach(([k, v]) => {
+        if (v > 0) clean[Number(k)] = v;
+      });
+      return clean;
     });
   };
 
@@ -311,9 +334,6 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
       const next = { ...prev };
       if (next[itemId]) {
         next[itemId] = next[itemId] - 1;
-        if (next[itemId] <= 0) {
-          delete next[itemId];
-        }
       }
       return next;
     });
@@ -328,7 +348,11 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   };
 
   const clearCart = () => {
-    updateCart(() => ({}));
+    setCartItems({});
+    setCartStep(1);
+    setOrderResult(null);
+    setDeliveryTime(deliverySettings[deliveryMethod]?.allow_asap ? 'asap' : 'scheduled');
+    setFormData(initialFormState);
   };
 
   const findMenuItemById = (id: number): CartItemDetails | null => {
@@ -351,36 +375,43 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/restaurants/${activeTeam}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      });
-      const resMenu = await fetch(`/api/restaurants/${activeTeam}/menu`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
-      });
+      const [restaurantData, menuResponse] = await Promise.all([
+        restaurantService.getRestaurant(activeTeam),
+        menuService.getMenu(activeTeam)
+      ]);
 
-      if (!res.ok) throw new Error("Failed to fetch restaurant data");
-      const restaurantData = await res.json();
       let menuData: MenuCategory[] = [];
-      if (resMenu.ok) {
-        const json = await resMenu.json();
-        menuData = json.categories
-          .map((cat: MenuCategory) => ({
+      if (menuResponse?.categories) {
+        menuData = menuResponse.categories
+          .map((cat: any) => ({
             ...cat,
-            items: cat.items
+            items: (cat.items || [])
               .filter((item: MenuItem) => item.view === true)
               .sort((a: MenuItem, b: MenuItem) => a.placenum - b.placenum),
           }))
           .sort((a: MenuCategory, b: MenuCategory) => a.placenum - b.placenum);
       }
 
+      let parsedDeliverySettings: DeliverySettingsData = defaultDeliverySettings;
+      if (restaurantData.delivery_settings) {
+        try {
+          const raw = typeof restaurantData.delivery_settings === 'string'
+            ? JSON.parse(restaurantData.delivery_settings)
+            : restaurantData.delivery_settings;
+          parsedDeliverySettings = {
+            delivery: { ...defaultDeliverySettings.delivery, ...(raw?.delivery || {}) },
+            pickup: { ...defaultDeliverySettings.pickup, ...(raw?.pickup || {}) },
+          };
+        } catch (error) {
+          console.error('Failed to parse delivery settings', error);
+          parsedDeliverySettings = defaultDeliverySettings;
+        }
+      }
+
       categoryRefs.current = {};
-      itemRefs.current = {};
 
       setData({
+        id: restaurantData.id,
         photo: restaurantData.photo,
         name: restaurantData.name,
         description: restaurantData.description || "",
@@ -396,13 +427,30 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
         phone: restaurantData.phone || "",
         subdomain: restaurantData.subdomain || "",
         type: restaurantData.type || "",
+        currency: restaurantData.currency || "RUB",
+        delivery_settings: restaurantData.delivery_settings || null,
       });
 
-      if (menuData.length > 0) {
-        setActiveCat(menuData[0].id);
+      setDeliverySettings(parsedDeliverySettings);
+
+      const preferredMethod = parsedDeliverySettings.delivery.enabled
+        ? 'delivery'
+        : parsedDeliverySettings.pickup.enabled
+          ? 'pickup'
+          : 'delivery';
+      setDeliveryMethod(preferredMethod);
+
+      const supportsAsap = parsedDeliverySettings[preferredMethod as keyof DeliverySettingsData].allow_asap;
+      const supportsScheduled = parsedDeliverySettings[preferredMethod as keyof DeliverySettingsData].allow_scheduled;
+      if (!supportsAsap && supportsScheduled) {
+        setDeliveryTime('scheduled');
+      } else if (supportsAsap) {
+        setDeliveryTime('asap');
       }
-    } catch (err) {
-      console.error(err);
+
+      if (menuData.length > 0) setActiveCat(menuData[0].id);
+    } catch (err: any) {
+      console.error("Error fetching restaurant view data:", err);
     } finally {
       setLoading(false);
     }
@@ -413,125 +461,10 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
   }, [fetchRestaurantViewData]);
 
   useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ team?: string }>).detail;
-      if (!detail?.team || detail.team === activeTeam) {
-        fetchRestaurantViewData();
-      }
-    };
-    window.addEventListener("restaurant:updated", handler as EventListener);
-    return () => window.removeEventListener("restaurant:updated", handler as EventListener);
-  }, [activeTeam, fetchRestaurantViewData]);
-
-  useEffect(() => {
-    if (!activeTeam) {
-      setCartItems({});
-      setCartExpiresAt(null);
-      return;
-    }
-
-    if (typeof window === "undefined") return;
-
-    const saved = localStorage.getItem(cartKey);
-    if (!saved) {
-      setCartItems({});
-      setCartExpiresAt(null);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(saved) as {
-        items?: unknown;
-        expiresAt?: number;
-      };
-      if (parsed.expiresAt && parsed.expiresAt > Date.now()) {
-        let restored: Record<number, number> = {};
-        if (Array.isArray(parsed.items)) {
-          parsed.items.forEach((id) => {
-            if (typeof id === "number") {
-              restored[id] = (restored[id] || 0) + 1;
-            }
-          });
-        } else if (parsed.items && typeof parsed.items === "object") {
-          Object.entries(parsed.items as Record<string, unknown>).forEach(
-            ([key, value]) => {
-              const id = Number(key);
-              const qty = Number(value);
-              if (!Number.isNaN(id) && qty > 0) {
-                restored[id] = Math.floor(qty);
-              }
-            }
-          );
-        }
-
-        restored = normalizeCart(restored);
-
-        if (Object.keys(restored).length > 0) {
-          setCartItems(restored);
-          setCartExpiresAt(parsed.expiresAt);
-        } else {
-          localStorage.removeItem(cartKey);
-          setCartItems({});
-          setCartExpiresAt(null);
-        }
-      } else {
-        localStorage.removeItem(cartKey);
-        setCartItems({});
-        setCartExpiresAt(null);
-      }
-    } catch {
-      localStorage.removeItem(cartKey);
-      setCartItems({});
-      setCartExpiresAt(null);
-    }
-  }, [cartKey, activeTeam]);
-
-  useEffect(() => {
-    if (!data) return;
-
-    setCartItems((prev) => {
-      const keys = Object.keys(prev);
-      if (keys.length === 0) return prev;
-
-      const available = new Set<number>();
-      data.menu.forEach((cat) => {
-        cat.items.forEach((item) => available.add(item.id));
-      });
-
-      const filtered: Record<number, number> = {};
-      keys.forEach((key) => {
-        const id = Number(key);
-        if (available.has(id)) {
-          filtered[id] = prev[id];
-        }
-      });
-
-      const normalized = normalizeCart(filtered);
-      if (Object.keys(normalized).length === keys.length) return prev;
-
-      saveCart(normalized);
-      return normalized;
-    });
-  }, [data]);
-
-  // Отслеживание активной категории при прокрутке
-  useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      !data ||
-      !data.menu ||
-      data.menu.length === 0
-    )
-      return;
-
     const handleScroll = () => {
       const categories = getVisibleCategories();
-      if (categories.length === 0) return;
-
-      const headerHeight =
-        menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
       const targetLine = headerHeight + 24;
-
       let newActive: number | null = null;
 
       for (const cat of categories) {
@@ -543,1141 +476,676 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
           break;
         }
       }
-
-      if (!newActive) {
-        for (const cat of categories) {
-          const el = categoryRefs.current[cat.id];
-          if (!el) continue;
-          const rect = el.getBoundingClientRect();
-          if (rect.top > targetLine) {
-            newActive = cat.id;
-            break;
-          }
-        }
-      }
-
-      if (!newActive && categories.length > 0) {
-        newActive = categories[categories.length - 1].id;
-      }
-
       if (newActive && newActive !== activeCat) {
         setActiveCat(newActive);
         scrollCategoryIntoView(newActive);
       }
     };
-
     window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [data, activeCat]);
 
-    return () => {
-      window.removeEventListener("scroll", handleScroll);
-    };
-  }, [data, normalizedSearch, activeCat]);
-
-  useEffect(() => {
-    if (!data || !data.menu || data.menu.length === 0) {
-      if (activeCat !== null) {
-        setActiveCat(null);
-      }
-      return;
-    }
-
-    const visible = getVisibleCategories();
-    if (visible.length === 0) {
-      if (activeCat !== null) {
-        setActiveCat(null);
-      }
-      return;
-    }
-
-    if (!activeCat || !visible.some((cat) => cat.id === activeCat)) {
-      setActiveCat(visible[0].id);
-    }
-  }, [data, normalizedSearch, activeCat]);
-
-  useEffect(() => {
-    const count = Object.values(cartItems).reduce((sum, qty) => sum + qty, 0);
-    if (count === 0 && isCartOpen) {
-      setIsCartOpen(false);
-    }
-  }, [cartItems, isCartOpen]);
-
-  // IntersectionObserver для sticky header
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsSticky(!entry.isIntersecting);
-      },
-      {
-        root: null,
-        threshold: 0,
-        rootMargin: "-1px 0px 0px 0px",
-      }
-    );
-
-    if (menuHeaderRef.current) {
-      observer.observe(menuHeaderRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, []);
-
-  // Функция для прокрутки категории в видимую область
   const scrollCategoryIntoView = (categoryId: number) => {
     if (!categoriesContainerRef.current) return;
-
-    const visibleCategories = getVisibleCategories();
-    const categoryIndex = visibleCategories.findIndex(
-      (cat) => cat.id === categoryId
-    );
-    if (categoryIndex === -1) return;
-
-    const container = categoriesContainerRef.current;
-    const categoryButtons = container.querySelectorAll("button");
-
-    if (categoryButtons[categoryIndex]) {
-      const button = categoryButtons[categoryIndex];
-      const containerRect = container.getBoundingClientRect();
-      const buttonRect = button.getBoundingClientRect();
-
-      if (
-        buttonRect.left < containerRect.left ||
-        buttonRect.right > containerRect.right
-      ) {
-        button.scrollIntoView({
-          behavior: "smooth",
-          inline: "center",
-          block: "nearest",
-        });
-      }
+    const items = categoriesContainerRef.current.querySelectorAll("button");
+    const visible = getVisibleCategories();
+    const idx = visible.findIndex(c => c.id === categoryId);
+    if (idx !== -1 && items[idx]) {
+      items[idx].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
     }
   };
 
   const scrollToCategory = (categoryId: number) => {
-    if (typeof window === "undefined") return;
-
-    const element = categoryRefs.current[categoryId];
-    if (!element) return;
-
-    const headerHeight =
-      menuHeaderRef.current?.getBoundingClientRect().height || 0;
+    const el = categoryRefs.current[categoryId];
+    if (!el) return;
+    const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
     const offset = headerHeight + 24;
-    const elementRect = element.getBoundingClientRect();
-    const targetTop = window.scrollY + elementRect.top - offset;
-
-    window.scrollTo({
-      top: targetTop > 0 ? targetTop : 0,
-      behavior: "smooth",
-    });
+    window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - offset, behavior: "smooth" });
   };
 
-  const scrollItemIntoView = (itemId: number) => {
-    if (typeof window === "undefined") return;
-    const element = itemRefs.current[itemId];
-    if (!element) return;
-
-    const headerHeight =
-      menuHeaderRef.current?.getBoundingClientRect().height || 0;
-    const offset = headerHeight + 24;
-    const rect = element.getBoundingClientRect();
-
-    const targetTop = window.scrollY + rect.top - offset;
-    window.scrollTo({
-      top: targetTop > 0 ? targetTop : 0,
-      behavior: "smooth",
-    });
-  };
-
-  const handleItemClick = (
-    item: MenuItem,
-    index: number,
-    categoryId: number
-  ) => {
+  const handleItemClick = (item: MenuItem, index: number, categoryId: number) => {
     setSelectedItem(item);
     setCurrentItemIndex(index);
     setCurrentCategoryId(categoryId);
     setActiveCat(categoryId);
-    scrollCategoryIntoView(categoryId);
-    scrollItemIntoView(item.id);
   };
 
   const handleNextItem = () => {
-    if (!data || currentItemIndex === -1 || currentCategoryId === null) return;
-
-    const catIndex = data.menu.findIndex((cat) => cat.id === currentCategoryId);
-    if (catIndex === -1) return;
-
-    const currentCat = data.menu[catIndex];
-    const nextIndex = currentItemIndex + 1;
-
-    if (nextIndex < currentCat.items.length) {
-      const nextItem = currentCat.items[nextIndex];
-      setSelectedItem(nextItem);
-      setCurrentItemIndex(nextIndex);
-      scrollItemIntoView(nextItem.id);
-    } else if (catIndex + 1 < data.menu.length) {
-      const nextCat = data.menu[catIndex + 1];
-      if (nextCat.items.length > 0) {
-        const firstItem = nextCat.items[0];
-        setSelectedItem(firstItem);
-        setCurrentItemIndex(0);
-        setCurrentCategoryId(nextCat.id);
-        setActiveCat(nextCat.id);
-        scrollToCategory(nextCat.id);
-        scrollCategoryIntoView(nextCat.id);
-        scrollItemIntoView(firstItem.id);
-      }
+    if (!data || currentCategoryId === null) return;
+    const catIdx = data.menu.findIndex(c => c.id === currentCategoryId);
+    const cat = data.menu[catIdx];
+    if (currentItemIndex < cat.items.length - 1) {
+      setSelectedItem(cat.items[currentItemIndex + 1]);
+      setCurrentItemIndex(currentItemIndex + 1);
+    } else if (catIdx < data.menu.length - 1) {
+      const nextCat = data.menu[catIdx + 1];
+      setSelectedItem(nextCat.items[0]);
+      setCurrentItemIndex(0);
+      setCurrentCategoryId(nextCat.id);
+      setActiveCat(nextCat.id);
     }
   };
 
   const handlePrevItem = () => {
-    if (!data || currentItemIndex === -1 || currentCategoryId === null) return;
-
-    const catIndex = data.menu.findIndex((cat) => cat.id === currentCategoryId);
-    if (catIndex === -1) return;
-
-    const currentCat = data.menu[catIndex];
-    const prevIndex = currentItemIndex - 1;
-
-    if (prevIndex >= 0) {
-      const prevItem = currentCat.items[prevIndex];
-      setSelectedItem(prevItem);
-      setCurrentItemIndex(prevIndex);
-      scrollItemIntoView(prevItem.id);
-    } else if (catIndex - 1 >= 0) {
-      const prevCat = data.menu[catIndex - 1];
-      if (prevCat.items.length > 0) {
-        const lastIndex = prevCat.items.length - 1;
-        const lastItem = prevCat.items[lastIndex];
-        setSelectedItem(lastItem);
-        setCurrentItemIndex(lastIndex);
-        setCurrentCategoryId(prevCat.id);
-        setActiveCat(prevCat.id);
-        scrollToCategory(prevCat.id);
-        scrollCategoryIntoView(prevCat.id);
-        scrollItemIntoView(lastItem.id);
-      }
+    if (!data || currentCategoryId === null) return;
+    const catIdx = data.menu.findIndex(c => c.id === currentCategoryId);
+    const cat = data.menu[catIdx];
+    if (currentItemIndex > 0) {
+      setSelectedItem(cat.items[currentItemIndex - 1]);
+      setCurrentItemIndex(currentItemIndex - 1);
+    } else if (catIdx > 0) {
+      const prevCat = data.menu[catIdx - 1];
+      setSelectedItem(prevCat.items[prevCat.items.length - 1]);
+      setCurrentItemIndex(prevCat.items.length - 1);
+      setCurrentCategoryId(prevCat.id);
+      setActiveCat(prevCat.id);
     }
-  };
-
-  // Функция для проверки, является ли элемент последним
-  const isLastItem = () => {
-    if (!data || currentItemIndex === -1 || currentCategoryId === null)
-      return true;
-
-    const catIndex = data.menu.findIndex((cat) => cat.id === currentCategoryId);
-    if (catIndex === -1) return true;
-
-    const currentCat = data.menu[catIndex];
-    const isLastInCategory = currentItemIndex === currentCat.items.length - 1;
-    const isLastCategory = catIndex === data.menu.length - 1;
-
-    return isLastInCategory && isLastCategory;
-  };
-
-  // Функция для проверки, является ли элемент первым
-  const isFirstItem = () => {
-    if (!data || currentItemIndex === -1 || currentCategoryId === null)
-      return true;
-
-    const catIndex = data.menu.findIndex((cat) => cat.id === currentCategoryId);
-    if (catIndex === -1) return true;
-
-    const currentCat = data.menu[catIndex];
-    const isFirstInCategory = currentItemIndex === 0;
-    const isFirstCategory = catIndex === 0;
-
-    return isFirstInCategory && isFirstCategory;
   };
 
   useEffect(() => {
-    if (!cartExpiresAt) {
-      setTimeLeft(null);
-      return;
+    if (!selectedItem) return;
+
+    const target = itemRefs.current[selectedItem.id];
+    if (target) {
+      const headerHeight = menuHeaderRef.current?.getBoundingClientRect().height || 0;
+      const offset = headerHeight + 24;
+      const top = window.scrollY + target.getBoundingClientRect().top - offset;
+      window.scrollTo({ top, behavior: "smooth" });
     }
+  }, [selectedItem]);
 
-    const update = () => {
-      const diff = cartExpiresAt - Date.now();
-      if (diff <= 0) {
-        setTimeLeft(0);
-      } else {
-        setTimeLeft(Math.ceil(diff / 60000));
-      }
-    };
+  const isFirstItem = () => !data || (currentItemIndex === 0 && data.menu.findIndex(c => c.id === currentCategoryId) === 0);
+  const isLastItem = () => !data || (currentCategoryId !== null && currentItemIndex === data.menu[data.menu.findIndex(c => c.id === currentCategoryId)].items.length - 1 && data.menu.findIndex(c => c.id === currentCategoryId) === data.menu.length - 1);
 
-    update();
+  const cartDetails: CartEntry[] = Object.entries(cartItems)
+    .map(([k, v]) => {
+      const d = findMenuItemById(Number(k));
+      return d ? { ...d, quantity: v } : null;
+    })
+    .filter((e): e is CartEntry => !!e);
 
-    const interval = setInterval(update, 30000);
+  const totalPrice = cartDetails.reduce((s, i) => s + i.price * i.quantity, 0);
+  const cartCount = cartDetails.reduce((s, i) => s + i.quantity, 0);
+  const uniqueItemCount = cartDetails.length;
+  const hasSelectedItemNutrition = selectedItem
+    ? [selectedItem.calories, selectedItem.proteins, selectedItem.fats, selectedItem.carbs].some(hasNutritionValue)
+    : false;
 
-    return () => clearInterval(interval);
-  }, [cartExpiresAt]);
+  const currentMethodSettings = deliverySettings[deliveryMethod];
+  const availablePaymentMethods: PaymentMethod[] = (currentMethodSettings?.payment_methods?.length
+    ? currentMethodSettings.payment_methods
+    : defaultDeliverySettings[deliveryMethod].payment_methods) as PaymentMethod[];
+  const paymentLabels: Record<PaymentMethod, string> = {
+    cash: 'Наличными',
+    card: 'Картой при получении',
+    transfer: 'Переводом',
+  };
 
   useEffect(() => {
-    if (!cartExpiresAt) return;
-
-    const now = Date.now();
-    if (cartExpiresAt <= now) {
-      setCartItems({});
-      setCartExpiresAt(null);
-      if (typeof window !== "undefined") {
-        localStorage.removeItem(cartKey);
-      }
-      return;
+    const supportsAsap = currentMethodSettings?.allow_asap;
+    const supportsScheduled = currentMethodSettings?.allow_scheduled;
+    if (!supportsAsap && supportsScheduled && deliveryTime === 'asap') {
+      setDeliveryTime('scheduled');
+    }
+    if (!supportsScheduled && deliveryTime === 'scheduled' && supportsAsap) {
+      setDeliveryTime('asap');
     }
 
-    const timeout = setTimeout(() => {
-      setCartItems({});
-      setCartExpiresAt(null);
-      if (typeof window !== "undefined") {
-        localStorage.removeItem(cartKey);
-      }
-    }, cartExpiresAt - now);
+    if (deliveryMethod === 'pickup') {
+      setFormData((prev) => ({ ...prev, address: prev.address || addressWithoutCity }));
+    }
+  }, [currentMethodSettings?.allow_asap, currentMethodSettings?.allow_scheduled, deliveryMethod, addressWithoutCity, deliveryTime]);
 
-    return () => clearTimeout(timeout);
-  }, [cartExpiresAt, cartKey]);
+  useEffect(() => {
+    if (!availablePaymentMethods.includes(formData.paymentMethod as PaymentMethod)) {
+      setFormData((prev) => ({ ...prev, paymentMethod: availablePaymentMethods[0] || 'cash' }));
+    }
+  }, [availablePaymentMethods, formData.paymentMethod]);
+
+  const trimmedName = formData.name.trim();
+  const trimmedPhone = formData.phone.trim();
+  const trimmedAddress = formData.address.trim();
+  const trimmedDesiredTime = formData.desiredTime.trim();
+  const canSubmitOrder = Boolean(
+    cartDetails.length > 0 &&
+    currentMethodSettings?.enabled &&
+    trimmedName &&
+    trimmedPhone &&
+    (deliveryMethod === 'pickup' || trimmedAddress) &&
+    (deliveryTime !== 'scheduled' || trimmedDesiredTime)
+  );
+
+  const handleSubmitOrder = async () => {
+    if (!data?.id) return;
+    if (!canSubmitOrder) {
+      toast.error("Заполните обязательные поля заказа");
+      setCartStep(2);
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const res = await orderService.createOrder(data.id, {
+        customer_name: trimmedName,
+        customer_phone: trimmedPhone,
+        delivery_method: deliveryMethod,
+        delivery_address: deliveryMethod === 'delivery' ? trimmedAddress : null,
+        delivery_zone: null,
+        delivery_time: deliveryTime === 'asap' ? 'ASAP' : trimmedDesiredTime || 'Scheduled',
+        delivery_time_option: deliveryTime,
+        payment_method: formData.paymentMethod,
+        items: cartDetails.map(i => ({ id: i.id, name: i.name, quantity: i.quantity, price: i.price })),
+        comment: formData.comment
+      });
+      setOrderResult({ id: res.order_id, number: res.order_number });
+      setCartStep(4);
+    } catch (e) {
+      console.error(e);
+      alert("Ошибка при оформлении заказа");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   if (loading || !data) {
     return (
-      <div className="bg-gray-100 min-h-screen">
-        <div className="max-w-6xl mx-auto p-4 space-y-8">
-          {/* Restaurant Info Block */}
-          <div className="bg-white rounded-2xl p-6 space-y-6">
-            <div className="flex justify-between gap-6">
-              <div className="flex-1 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Skeleton className="h-6 w-20" />
-                  <Skeleton className="h-8 w-1/3" />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Skeleton className="h-6 w-24" />
-                  <Skeleton className="h-6 w-24" />
-                  <Skeleton className="h-6 w-24" />
-                </div>
-                <Skeleton className="h-4 w-3/4" />
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-4 w-24" />
-                </div>
-                <div className="flex gap-4">
-                  <Skeleton className="h-6 w-6" />
-                  <Skeleton className="h-6 w-6" />
-                  <Skeleton className="h-6 w-6" />
-                  <Skeleton className="h-6 w-6" />
-                </div>
-              </div>
-              <Skeleton className="w-64 h-64 rounded-2xl" />
-            </div>
+      <div className="bg-gray-100 min-h-screen p-4 space-y-8">
+        <div className="bg-white rounded-2xl p-6 flex gap-6">
+          <div className="flex-1 space-y-4">
+            <Skeleton className="h-8 w-1/3" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-32 w-full" />
           </div>
-          {/* Menu Block */}
-          <div className="bg-white rounded-2xl p-6 space-y-6">
-            <div className="sticky top-0 bg-white z-1 pb-3 border-b-2 border-black-500 border-solid">
-              <Skeleton className="h-6 w-24 mb-2" />
-              <div className="flex gap-3">
-                <Skeleton className="h-8 w-20 rounded-lg" />
-                <Skeleton className="h-8 w-20 rounded-lg" />
-                <Skeleton className="h-8 w-20 rounded-lg" />
-              </div>
-            </div>
-            {/* Category Sections */}
-            {[1, 2].map((_, catIndex) => (
-              <div key={catIndex} className="space-y-4">
-                <Skeleton className="h-6 w-32" />
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {[1, 2, 3, 4, 5, 6].map((_, itemIndex) => (
-                    <div key={itemIndex} className="p-2">
-                      <Skeleton className="w-full h-32 rounded-xl" />
-                      <div className="flex justify-between mt-2">
-                        <Skeleton className="h-4 w-3/4" />
-                        <Skeleton className="h-4 w-16" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <Skeleton className="w-64 h-64 rounded-2xl" />
         </div>
       </div>
     );
   }
 
-  const isRestaurantIncomplete =
-    !data.phone || !data.address || !data.city || !data.hours;
-  const missingRestaurantFields = [
-    !data.city && "город",
-    !data.address && "адрес",
-    !data.phone && "телефон",
-    !data.hours && "время работы",
-  ].filter(Boolean) as string[];
-
+  const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours;
   if (isRestaurantIncomplete) {
     return (
       <div className="flex flex-col bg-gray-100 min-h-screen">
         <div className="px-4 pt-4">
-          <Alert variant="default">
-            <AlertCircleIcon />
+          <Alert>
+            <AlertCircleIcon className="h-4 w-4" />
             <AlertTitle>Необходимо заполнить данные!</AlertTitle>
-            <AlertDescription>
-              Заполните данные заведения: {missingRestaurantFields.join(", ")}
-            </AlertDescription>
+            <AlertDescription>Пожалуйста, заполните контактную информацию заведения.</AlertDescription>
           </Alert>
         </div>
-        <div className="flex-1">
-          <EditData activeTeam={activeTeam} />
-        </div>
+        <GeneralInfo activeTeam={activeTeam} />
       </div>
     );
   }
+
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
-  const categoriesForNav = getVisibleCategories();
-  const cartDetails: CartEntry[] = Object.entries(cartItems)
-    .map(([key, value]) => {
-      const id = Number(key);
-      const details = findMenuItemById(id);
-      if (!details) return null;
-      return { ...details, quantity: Number(value) };
-    })
-    .filter((item): item is CartEntry => !!item && item.quantity > 0);
-  const totalPrice = cartDetails.reduce(
-    (sum, item) => sum + item.price * item.quantity,
-    0
-  );
-  const cartCount = cartDetails.reduce((sum, item) => sum + item.quantity, 0);
-  const uniqueItemCount = cartDetails.length;
-  const selectedItemQuantity = selectedItem
-    ? cartItems[selectedItem.id] || 0
-    : 0;
-  const selectedItemWeight = selectedItem
-    ? Number(selectedItem.weight)
-    : null;
-  const showSelectedWeight =
-    selectedItemWeight !== null &&
-    !Number.isNaN(selectedItemWeight) &&
-    selectedItemWeight > 0;
-  const timeLeftText =
-    timeLeft !== null
-      ? timeLeft <= 1
-        ? "Менее минуты до очистки"
-        : `Список сохранится примерно ${timeLeft} мин.`
-      : "";
 
   return (
     <div className="bg-gray-100 min-h-screen">
-      {/* Restaurant Header with Full Width Photo */}
       <div className="bg-white rounded-b-[18px] md:bg-transparent md:rounded-none">
         {data.photo && (
-          <div className="w-full h-[150px] md:hidden overflow-hidden px-4 mt-4 md:mt-0">
-            <img
-              src={data.photo}
-              alt={data.name || "Фото заведения"}
-              width={1200}
-              height={150}
-              loading="lazy"
-              decoding="async"
-              className="w-full h-full object-cover rounded-[8px]"
-            />
+          <div className="w-full h-[150px] md:hidden overflow-hidden px-4 mt-4">
+            <img src={data.photo} className="w-full h-full object-cover rounded-[8px]" />
           </div>
         )}
+        <div className="px-0 md:px-4 max-w-6xl mx-auto">
+          {/* Mobile Header */}
+          <div className="md:hidden p-4 space-y-4">
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+              <img src="https://taam.menu/menu.gif" className="w-6 h-6" />
+              {data.type && <Badge className="bg-[#90FF55] text-black">{data.type}</Badge>}
+              {data.features.map(f => <Badge key={f} className="bg-yellow-300 text-black">{f}</Badge>)}
+            </div>
+            <h1 className="text-2xl font-bold">{data.name}</h1>
+            <p className="text-gray-700">{data.description || "Нет описания"}</p>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div><h3 className="font-semibold text-gray-600">Город</h3><p>{data.city}</p></div>
+              <div><h3 className="font-semibold text-gray-600">Адрес</h3><p>{data.address}</p></div>
+              <div><h3 className="font-semibold text-gray-600">Телефон</h3><p>{data.phone}</p></div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h3 className="font-semibold mb-2 text-center">График работы</h3>
+              {formatHours(data.hours)}
+            </div>
+          </div>
 
-        <div className="px-0 md:px-4">
-          <div className="max-w-6xl mx-auto">
-            {/* Mobile Layout */}
-            <div className="md:hidden p-4 space-y-4">
-              {/* Badges - Scrollable */}
-              <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-2">
-                <img
-                  src="https://taam.menu/menu.gif"
-                  alt="menu gif"
-                  className="w-6 h-6 md:hidden"
-                />
-                {data.type && (
-                  <Badge className="bg-[#90FF55] text-black whitespace-nowrap">
-                    {data.type}
-                  </Badge>
-                )}
-                {data.features.map((feature) => (
-                  <Badge
-                    key={feature}
-                    className="bg-yellow-300 text-black whitespace-nowrap"
-                  >
-                    {feature}
-                  </Badge>
-                ))}
-              </div>
-
-              {/* Name */}
-              <h1 className="text-2xl font-bold">{data.name}</h1>
-
-              {/* Description */}
-              <p className="text-gray-700">
-                {data.description || "Нет описания"}
-              </p>
-
-              {/* Info Grid - Improved spacing */}
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <h3 className="font-semibold text-sm text-gray-600">
-                      Город
-                    </h3>
-                    <p className="text-base">{data.city || "—"}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <h3 className="font-semibold text-sm text-gray-600">
-                      Адрес
-                    </h3>
-                    <p className="text-base">{data.address || "—"}</p>
+          {/* Desktop Header */}
+          <div className="hidden md:block bg-white rounded-b-[18px] p-8 mt-4">
+            <div className="flex gap-8">
+              <div className="flex-1 space-y-6">
+                <div>
+                  <h1 className="text-3xl font-bold">{data.name}</h1>
+                  <div className="flex gap-2 mt-2">
+                    {data.type && <Badge className="bg-[#90FF55] text-black">{data.type}</Badge>}
+                    {data.features.map(f => <Badge key={f} className="bg-yellow-300 text-black">{f}</Badge>)}
                   </div>
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <h3 className="font-semibold text-sm text-gray-600">
-                      Телефон
-                    </h3>
-                    <p className="text-base">{data.phone || "—"}</p>
+                <div>
+                  <span className="text-xs font-semibold uppercase text-gray-500">Описание</span>
+                  <p className="text-gray-700 mt-1">{data.description || "Нет описания"}</p>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <span className="text-xs font-semibold uppercase text-gray-500">Город</span>
+                    <p className="mt-1 font-medium">{data.city}</p>
+                  </div>
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <span className="text-xs font-semibold uppercase text-gray-500">Адрес</span>
+                    <p className="mt-1 font-medium">{addressWithoutCity || data.address}</p>
+                  </div>
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <span className="text-xs font-semibold uppercase text-gray-500">Телефон</span>
+                    <p className="mt-1 font-medium">{data.phone}</p>
                   </div>
                 </div>
               </div>
+              {data.photo && (
+                <div className="w-64 h-64 rounded-2xl overflow-hidden border">
+                  <img src={data.photo} className="w-full h-full object-cover" />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
 
-              {/* Hours Block - Added with background */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="font-semibold mb-3 text-center">
-                  График работы
-                </h3>
-                <div className="text-base">{formatHours(data.hours)}</div>
-              </div>
+      <div className="h-4"></div>
 
-              {/* Social Links - Highlighted */}
-              <div className="bg-gray-50 rounded-lg p-4 ">
-                <h3 className="font-semibold mb-3 text-center">
-                  Мы в соцсетях
-                </h3>
-                <div className="flex gap-4 justify-center items-center">
-                  {/* {data.instagram && (
-                    <a
-                      href={data.instagram}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 bg-white rounded-lg shadow-sm"
-                    >
-                      <Instagram className="w-6 h-6" />
-                    </a>
-                  )} */}
-                  {data.telegram && (
-                    <a
-                      href={`https://t.me/${data.telegram}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 bg-white rounded-lg shadow-sm"
-                    >
-                      <Send className="w-6 h-6" />
-                    </a>
-                  )}
-                  {data.whatsapp && (
-                    <a
-                      href={`https://wa.me/${data.whatsapp}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 bg-white rounded-lg shadow-sm w-10 h-10 flex items-center justify-center"
-                    >
-                      <svg
-                        xmlns="https://www.w3.org/2000/svg"
-                        viewBox="0 0 640 640"
-                        fill="currentColor"
-                        className="w-6 h-6"
+      {/* Menu Section */}
+      <div className="bg-white rounded-t-2xl md:rounded-2xl max-w-6xl mx-auto min-h-[60vh]">
+        <div ref={menuHeaderRef} className="sticky top-0 bg-white z-10 border-b-2 transition-all p-4 space-y-3 rounded-t-2xl">
+          <div className="flex justify-between items-center">
+            <p className="text-xl font-bold">{isSticky ? data.name : "Меню"}</p>
+            <img src="https://taam.menu/menu.gif" className="w-6 h-6 md:hidden" />
+          </div>
+          <Input
+            value={searchValue}
+            onChange={e => setSearchValue(e.target.value)}
+            placeholder="Поиск по блюдам"
+            className="bg-gray-100 border-none"
+          />
+          <div ref={categoriesContainerRef} className="flex gap-3 overflow-x-auto scrollbar-hide">
+            {getVisibleCategories().map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => { setActiveCat(cat.id); scrollToCategory(cat.id); }}
+                className={cn("px-4 py-1 rounded-lg text-sm whitespace-nowrap", activeCat === cat.id ? "bg-gray-200 font-bold" : "hover:bg-gray-100")}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4 space-y-8">
+          {getVisibleCategories().map(cat => {
+            const items = normalizedSearch ? cat.items.filter(i => i.name.toLowerCase().includes(normalizedSearch)) : cat.items;
+            if (items.length === 0) return null;
+            return (
+              <div key={cat.id} ref={el => { categoryRefs.current[cat.id] = el; }} className="scroll-mt-40">
+                <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {items.map((item, idx) => {
+                    const qty = cartItems[item.id] || 0;
+                    return (
+                      <div
+                        key={item.id}
+                        ref={el => { itemRefs.current[item.id] = el; }}
+                        onClick={() => handleItemClick(item, idx, cat.id)}
+                        className={cn("flex flex-col rounded-xl overflow-hidden shadow-sm border border-transparent hover:border-black transition-all cursor-pointer", qty > 0 && "border-black")}
                       >
-                        <path d="M476.9 161.1C435 119.1 379.2 96 319.9 96C197.5 96 97.9 195.6 97.9 318C97.9 357.1 108.1 395.3 127.5 429L96 544L213.7 513.1C246.1 530.8 282.6 540.1 319.8 540.1L319.9 540.1C442.2 540.1 544 440.5 544 318.1C544 258.8 518.8 203.1 476.9 161.1zM319.9 502.7C286.7 502.7 254.2 493.8 225.9 477L219.2 473L149.4 491.3L168 423.2L163.6 416.2C145.1 386.8 135.4 352.9 135.4 318C135.4 216.3 218.2 133.5 320 133.5C369.3 133.5 415.6 152.7 450.4 187.6C485.2 222.5 506.6 268.8 506.5 318.1C506.5 419.9 421.6 502.7 319.9 502.7zM421.1 364.5C415.6 361.7 388.3 348.3 383.2 346.5C378.1 344.6 374.4 343.7 370.7 349.3C367 354.9 356.4 367.3 353.1 371.1C349.9 374.8 346.6 375.3 341.1 372.5C308.5 356.2 287.1 343.4 265.6 306.5C259.9 296.7 271.3 297.4 281.9 276.2C283.7 272.5 282.8 269.3 281.4 266.5C280 263.7 268.9 236.4 264.3 225.3C259.8 214.5 255.2 216 251.8 215.8C248.6 215.6 244.9 215.6 241.2 215.6C237.5 215.6 231.5 217 226.4 222.5C221.3 228.1 207 241.5 207 268.8C207 296.1 226.9 322.5 229.6 326.2C232.4 329.9 268.7 385.9 324.4 410C359.6 425.2 373.4 426.5 391 423.9C401.7 422.3 423.8 410.5 428.4 397.5C433 384.5 433 373.4 431.6 371.1C430.3 368.6 426.6 367.2 421.1 364.5z" />
-                      </svg>
-                    </a>
-                  )}
-                  {data.vk && (
-                    <a
-                      href={data.vk}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 bg-white rounded-lg shadow-sm w-10 h-10 flex items-center justify-center"
-                    >
-                      <svg
-                        xmlns="https://www.w3.org/2000/svg"
-                        viewBox="0 0 640 640"
-                        fill="currentColor"
-                        className="w-6 h-6"
-                      >
-                        <path d="M127.5 127.5C96 159 96 209.7 96 311L96 329C96 430.3 96 481 127.5 512.5C159 544 209.7 544 311 544L328.9 544C430.3 544 481 544 512.4 512.5C543.8 481 544 430.3 544 329L544 311.1C544 209.7 544 159 512.5 127.6C481 96.2 430.3 96 329 96L311 96C209.7 96 159 96 127.5 127.5zM171.6 232.3L222.7 232.3C224.4 317.8 262.1 354 292 361.5L292 232.3L340.2 232.3L340.2 306C369.7 302.8 400.7 269.2 411.1 232.3L459.3 232.3C455.4 251.5 447.5 269.6 436.2 285.6C424.9 301.6 410.5 315.1 393.7 325.2C412.4 334.5 428.9 347.6 442.1 363.7C455.3 379.8 465 398.6 470.4 418.7L417.4 418.7C412.5 401.2 402.6 385.6 388.8 373.7C375 361.8 358.1 354.3 340.1 352.1L340.1 418.7L334.3 418.7C232.2 418.7 174 348.7 171.5 232.2z" />
-                      </svg>
-                    </a>
-                  )}
+                        <div className="aspect-square bg-gray-100 relative">
+                          {item.photo && <img src={item.photo} className="w-full h-full object-cover" />}
+                          {qty > 0 && <span className="absolute top-2 right-2 bg-black text-white text-[10px] px-2 py-1 rounded-full">В списке</span>}
+                        </div>
+                        <div className="p-3 flex-1 flex flex-col">
+                          <div className="flex justify-between items-start gap-2">
+                            <span className="font-medium text-sm line-clamp-2">{item.name}</span>
+                            {item.weight && <span className="text-[10px] text-gray-500 pt-0.5">{item.weight}гр</span>}
+                          </div>
+                          <div className="mt-auto pt-3 flex flex-col gap-2">
+                            <span className="font-bold">{formatPrice(item.price)}</span>
+                            {qty > 0 ? (
+                              <div className="flex items-center gap-1">
+                                <Button size="sm" variant="secondary" className="h-7" onClick={(e) => { e.stopPropagation(); decreaseCartItem(item.id); }}>−</Button>
+                                <span className="w-8 text-center text-sm font-bold w-full">{qty}</span>
+                                <Button size="sm" className="h-7 bg-[#FFEB5A] text-black hover:bg-[#FFEB5A]/80" onClick={(e) => { e.stopPropagation(); addToCart(item.id); }}>+</Button>
+                              </div>
+                            ) : (
+                              <Button size="sm" className="w-full bg-[#FFEB5A] text-black hover:bg-[#FFEB5A]/80 font-semibold" onClick={(e) => { e.stopPropagation(); addToCart(item.id); }}>В заказ</Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Floating Cart Button */}
+      {cartCount > 0 && (
+        <button
+          onClick={() => { setIsCartOpen(true); setCartStep(1); }}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-black text-white rounded-full flex items-center justify-center shadow-2xl z-50 transition-transform active:scale-95"
+        >
+          <ShoppingCart className="w-6 h-6" />
+          <span className="absolute -top-1 -right-1 bg-[#FFEB5A] text-black text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full border-2 border-white">{cartCount}</span>
+        </button>
+      )}
+
+      {/* Cart Dialog */}
+      <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
+        <DialogContent className="max-w-md w-[95vw] p-0 rounded-3xl overflow-hidden gap-0">
+          <div className="p-6">
+
+            <div className="flex items-center justify-between mb-4">
+              <DialogTitle className="text-xl font-bold">
+                {cartStep === 1 ? 'Мой заказ' : cartStep === 2 ? 'Доставка' : cartStep === 3 ? 'Данные' : 'Готово!'}
+              </DialogTitle>
+              {cartStep === 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-sm text-gray-600 hover:text-red-600 px-3"
+                  onClick={() => { clearCart(); setIsCartOpen(false); }}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" /> Очистить всё
+                </Button>
+              )}
             </div>
 
-            {/* Desktop Layout */}
-            <div className="hidden md:block bg-white rounded-b-[18px] p-8">
-              <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
-                <div className="flex-1 space-y-6">
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h1 className="text-3xl font-bold text-gray-900">{data.name}</h1>
+            {cartStep === 1 && (
+              <div className="space-y-4">
+                <div className="max-h-[40vh] overflow-y-auto space-y-3 pr-2 scrollbar-thin">
+                  {cartDetails.map(item => (
+                    <div key={item.id} className="flex gap-3 bg-gray-50 p-3 rounded-2xl">
+                      <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden shrink-0">
+                        {item.photo && <img src={item.photo} className="w-full h-full object-cover" />}
+                      </div>
+                      <div className="flex-1 flex flex-col">
+                        <span className="text-sm font-semibold line-clamp-1">{item.name}</span>
+                        <span className="text-xs text-gray-500">{formatPrice(item.price)}</span>
+                        <div className="mt-auto flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <button onClick={() => decreaseCartItem(item.id)} className="w-6 h-6 rounded-lg bg-white border flex items-center justify-center text-sm shadow-sm">-</button>
+                            <span className="text-sm font-bold">{item.quantity}</span>
+                            <button onClick={() => addToCart(item.id)} className="w-6 h-6 rounded-lg bg-[#FFEB5A] flex items-center justify-center text-sm shadow-sm">+</button>
+                          </div>
+                          <span className="text-sm font-bold">{formatPrice(item.price * item.quantity)}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {data.type && (
-                        <Badge className="bg-[#90FF55] text-black">
-                          {data.type}
-                        </Badge>
-                      )}
-                      {data.features.map((feature) => (
-                        <Badge key={feature} className="bg-yellow-300 text-black">
-                          {feature}
-                        </Badge>
-                      ))}
+                  ))}
+                </div>
+                <div className="pt-4 border-t space-y-4">
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-gray-500">Сумма заказа</span>
+                    <span className="text-xl font-black">{formatPrice(totalPrice)}</span>
+                  </div>
+                  <Button className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800" onClick={() => setCartStep(2)}>Перейти к оформлению</Button>
+                </div>
+              </div>
+            )}
+
+            {cartStep === 2 && (
+              <div className="space-y-6 max-h-[70vh] overflow-y-auto px-1 scrollbar-hide pb-4">
+                <Tabs value={deliveryMethod} className="w-full" onValueChange={(v) => {
+                  const method = v as 'delivery' | 'pickup';
+                  if (!deliverySettings[method]?.enabled) return;
+                  setDeliveryMethod(method);
+                }}>
+                  <TabsList className="grid grid-cols-2 mb-4 bg-gray-100 p-1 rounded-xl h-12">
+                    <TabsTrigger value="delivery" disabled={!deliverySettings.delivery.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Доставка</TabsTrigger>
+                    <TabsTrigger value="pickup" disabled={!deliverySettings.pickup.enabled} className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm h-full">Самовывоз</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
+                <div className="space-y-3 bg-gray-50 p-4 rounded-2xl border">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-xs uppercase font-semibold text-gray-500">{deliveryMethod === 'delivery' ? 'Стоимость доставки' : 'Самовывоз'}</p>
+                      <p className="text-lg font-semibold">
+                        {deliveryMethod === 'delivery'
+                          ? currentMethodSettings.cost_info || 'Стоимость рассчитывается по вашим тарифам'
+                          : currentMethodSettings.discount_percent
+                            ? `Скидка ${currentMethodSettings.discount_percent}% на самовывоз`
+                            : 'Готовим к вашему приезду'}
+                      </p>
                     </div>
+                    <Badge variant="secondary" className="px-3 py-1 rounded-full text-xs">
+                      {deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}
+                    </Badge>
                   </div>
 
-                  <div className="space-y-3">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                      Описание
-                    </span>
-                    <p className="text-base leading-relaxed text-gray-700">
-                      {data.description || "Нет описания"}
-                    </p>
-                  </div>
+                  {currentMethodSettings.message && (
+                    <Alert className="bg-white/70 border-dashed">
+                      <AlertDescription className="text-sm">
+                        {currentMethodSettings.message}
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5 shadow-sm">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      График работы
-                    </h3>
-                    <div className="mt-3 text-base text-gray-800">
+                  <div className="rounded-xl border bg-white p-3">
+                    <p className="text-xs uppercase font-semibold text-gray-500 mb-2">Режим работы</p>
+                    <div className="text-sm text-gray-800 space-y-1">
                       {formatHours(data.hours)}
                     </div>
                   </div>
 
-                  <div className="space-y-5">
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Город
-                        </p>
-                        <p className="mt-2 text-base text-gray-900">{data.city?.trim() || "—"}</p>
-                      </div>
-                      <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Адрес
-                        </p>
-                        <p className="mt-2 text-base text-gray-900">
-                          {addressWithoutCity || normalizedAddress.remainder || normalizedAddress.full || data.address?.trim() || "—"}
-                        </p>
-                      </div>
-                      <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Улица
-                        </p>
-                        <p className="mt-2 text-base text-gray-900">
-                          {normalizedAddress.street || data.address?.trim() || "—"}
-                        </p>
-                      </div>
+                  {deliveryMethod === 'pickup' && currentMethodSettings.asap_time_hint && (
+                    <div className="text-sm text-muted-foreground">
+                      {currentMethodSettings.asap_time_hint}
                     </div>
-                    <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        Телефон
-                      </span>
-                      <span className="text-base text-gray-900">{data.phone?.trim() || "—"}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-4">
-                    {data.telegram && (
-                      <a
-                        href={`https://t.me/${data.telegram}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
-                      >
-                        <Send className="h-5 w-5" />
-                      </a>
-                    )}
-                    {data.whatsapp && (
-                      <a
-                        href={`https://wa.me/${data.whatsapp}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
-                      >
-                        <svg
-                          xmlns="https://www.w3.org/2000/svg"
-                          viewBox="0 0 640 640"
-                          fill="currentColor"
-                          className="h-5 w-5"
-                        >
-                          <path d="M476.9 161.1C435 119.1 379.2 96 319.9 96C197.5 96 97.9 195.6 97.9 318C97.9 357.1 108.1 395.3 127.5 429L96 544L213.7 513.1C246.1 530.8 282.6 540.1 319.8 540.1L319.9 540.1C442.2 540.1 544 440.5 544 318.1C544 258.8 518.8 203.1 476.9 161.1zM319.9 502.7C286.7 502.7 254.2 493.8 225.9 477L219.2 473L149.4 491.3L168 423.2L163.6 416.2C145.1 386.8 135.4 352.9 135.4 318C135.4 216.3 218.2 133.5 320 133.5C369.3 133.5 415.6 152.7 450.4 187.6C485.2 222.5 506.6 268.8 506.5 318.1C506.5 419.9 421.6 502.7 319.9 502.7zM421.1 364.5C415.6 361.7 388.3 348.3 383.2 346.5C378.1 344.6 374.4 343.7 370.7 349.3C367 354.9 356.4 367.3 353.1 371.1C349.9 374.8 346.6 375.3 341.1 372.5C308.5 356.2 287.1 343.4 265.6 306.5C259.9 296.7 271.3 297.4 281.9 276.2C283.7 272.5 282.8 269.3 281.4 266.5C280 263.7 268.9 236.4 264.3 225.3C259.8 214.5 255.2 216 251.8 215.8C248.6 215.6 244.9 215.6 241.2 215.6C237.5 215.6 231.5 217 226.4 222.5C221.3 228.1 207 241.5 207 268.8C207 296.1 226.9 322.5 229.6 326.2C232.4 329.9 268.7 385.9 324.4 410C359.6 425.2 373.4 426.5 391 423.9C401.7 422.3 423.8 410.5 428.4 397.5C433 384.5 433 373.4 431.6 371.1C430.3 368.6 426.6 367.2 421.1 364.5z" />
-                        </svg>
-                      </a>
-                    )}
-                    {data.vk && (
-                      <a
-                        href={data.vk}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-sm transition hover:text-black"
-                      >
-                        <svg
-                          xmlns="https://www.w3.org/2000/svg"
-                          viewBox="0 0 640 640"
-                          fill="currentColor"
-                          className="h-5 w-5"
-                        >
-                          <path d="M127.5 127.5C96 159 96 209.7 96 311L96 329C96 430.3 96 481 127.5 512.5C159 544 209.7 544 311 544L328.9 544C430.3 544 481 544 512.4 512.5C543.8 481 544 430.3 544 329L544 311.1C544 209.7 544 159 512.5 127.6C481 96.2 430.3 96 329 96L311 96C209.7 96 159 96 127.5 127.5zM171.6 232.3L222.7 232.3C224.4 317.8 262.1 354 292 361.5L292 232.3L340.2 232.3L340.2 306C369.7 302.8 400.7 269.2 411.1 232.3L459.3 232.3C455.4 251.5 447.5 269.6 436.2 285.6C424.9 301.6 410.5 315.1 393.7 325.2C412.4 334.5 428.9 347.6 442.1 363.7C455.3 379.8 465 398.6 470.4 418.7L417.4 418.7C412.5 401.2 402.6 385.6 388.8 373.7C375 361.8 358.1 354.3 340.1 352.1L340.1 418.7L334.3 418.7C232.2 418.7 174 348.7 171.5 232.2z" />
-                        </svg>
-                      </a>
-                    )}
-                  </div>
+                  )}
                 </div>
-                {data.photo && (
-                  <div className="w-full max-w-xs shrink-0 self-start">
-                    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 p-2 shadow-sm">
-                      <img
-                        src={data.photo}
-                        alt={data.name || "Фото заведения"}
-                        width={288}
-                        height={288}
-                        loading="lazy"
-                        decoding="async"
-                        className="h-72 w-full rounded-xl object-cover"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Spacing between info and menu */}
-      <div className="h-2 md:h-2"></div>
+                <div className="space-y-3">
+                  <Label className="text-xs font-bold uppercase text-gray-400">Время получения</Label>
+                  <RadioGroup value={deliveryTime} onValueChange={(v) => setDeliveryTime(v as 'asap' | 'scheduled')} className="flex flex-col gap-2">
+                    {currentMethodSettings.allow_asap && (
+                      <div className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", deliveryTime === 'asap' ? "border-black bg-gray-50" : "bg-white")}>
+                        <RadioGroupItem value="asap" id="asap" />
+                        <div className="flex-1">
+                          <Label htmlFor="asap" className="flex-1 cursor-pointer font-medium">Как можно скорее</Label>
+                          <p className="text-xs text-muted-foreground">Мы начнем готовить сразу после подтверждения</p>
+                        </div>
+                      </div>
+                    )}
 
-      {/* Menu Block */}
-      <div className="bg-white rounded-t-2xl md:rounded-2xl md:max-w-6xl mx-auto">
-        <div className="max-w-6xl mx-auto">
-          <div
-            ref={menuHeaderRef}
-            className="sticky top-0 bg-white z-10 text-black-500 border-b-2 border-black-500 border-solid transition-all duration-200 rounded-t-[18px]"
-            style={{
-              boxShadow: isSticky ? "0 2px 10px rgba(0,0,0,0.1)" : "none",
-            }}
-          >
-            <div className="px-4 pt-4 pb-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xl font-bold">
-                  {isSticky ? data.name : "Меню"}
-                </p>
-                <img
-                  src="https://taam.menu/menu.gif"
-                  alt="menu gif"
-                  className="w-6 h-6 md:hidden"
-                />
-              </div>
-              <Input
-                value={searchValue}
-                onChange={(e) => setSearchValue(e.target.value)}
-                placeholder="Поиск по блюдам"
-                className="bg-gray-100 border-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              />
-              {categoriesForNav.length > 0 ? (
-                <div
-                  ref={categoriesContainerRef}
-                  className="flex gap-3 overflow-x-auto scrollbar-hide"
-                >
-                  {categoriesForNav.map((cat) => (
-                    <button
-                      key={cat.id}
-                      onClick={() => {
-                        setActiveCat(cat.id);
-                        scrollToCategory(cat.id);
-                        scrollCategoryIntoView(cat.id);
-                      }}
-                      className={cn(
-                        "px-3 py-1 rounded-lg text-sm whitespace-nowrap transition-colors flex-shrink-0",
-                        activeCat === cat.id
-                          ? "bg-gray-200 font-semibold"
-                          : "hover:bg-gray-100"
-                      )}
-                    >
-                      {cat.name}
-                    </button>
-                  ))}
+                    {currentMethodSettings.allow_scheduled && (
+                      <div className={cn("space-y-2 p-3 rounded-xl border transition-all", deliveryTime === 'scheduled' ? "border-black bg-gray-50" : "bg-white")}>
+                        <div className="flex items-center space-x-3">
+                          <RadioGroupItem value="scheduled" id="scheduled" />
+                          <div className="flex-1">
+                            <Label htmlFor="scheduled" className="font-medium cursor-pointer">К времени</Label>
+                            <p className="text-xs text-muted-foreground">Выберите удобное время, мы подстроимся</p>
+                          </div>
+                        </div>
+                        <Input
+                          placeholder="Например, 18:30"
+                          value={formData.desiredTime}
+                          onChange={(e) => setFormData((f) => ({ ...f, desiredTime: e.target.value }))}
+                          disabled={deliveryTime !== 'scheduled'}
+                          className="rounded-xl h-11"
+                        />
+                      </div>
+                    )}
+
+                    {!currentMethodSettings.allow_asap && !currentMethodSettings.allow_scheduled && (
+                      <div className="text-sm text-red-500">Способ временно недоступен</div>
+                    )}
+                  </RadioGroup>
                 </div>
-              ) : (
-                <div className="text-sm text-gray-500">
-                  Категории не найдены
-                </div>
-              )}
-            </div>
-          </div>
 
-          <div className="p-4 space-y-6">
-            {normalizedSearch && categoriesForNav.length === 0 ? (
-              <div className="text-center text-sm text-gray-500 py-10 border border-dashed border-gray-300 rounded-xl">
-                Ничего не найдено, попробуйте изменить запрос
-              </div>
-            ) : (
-              categoriesForNav.map((cat) => {
-                const itemsToShow = normalizedSearch
-                  ? cat.items.filter((item) =>
-                      item.name.toLowerCase().includes(normalizedSearch)
-                    )
-                  : cat.items;
-
-                return (
-                  <div
-                    key={cat.id}
-                    id={`cat-${cat.id}`}
-                    data-id={cat.id}
-                    ref={(el) => {
-                      categoryRefs.current[cat.id] = el;
-                    }}
-                    className="scroll-mt-36"
+                <div className="pt-2 border-t flex flex-col gap-3">
+                  <Button
+                    disabled={!currentMethodSettings.enabled || (!currentMethodSettings.allow_asap && !currentMethodSettings.allow_scheduled)}
+                    className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"
+                    onClick={() => setCartStep(3)}
                   >
-                    <h3 className="text-2xl font-bold mb-4">{cat.name}</h3>
-                    {itemsToShow.length > 0 ? (
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 md:gap-3 auto-rows-fr">
-                        {itemsToShow.map((item, index) => {
-                          const quantity = cartItems[item.id] || 0;
-                          const inCart = quantity > 0;
-                          const weightValue = Number(item.weight);
-                          const showWeight =
-                            !Number.isNaN(weightValue) && weightValue > 0;
-                          return (
-                            <div
-                              key={item.id}
-                              ref={(el) => {
-                                itemRefs.current[item.id] = el;
-                              }}
-                              className={cn(
-                                "relative flex h-full flex-col rounded-xl cursor-pointer hover:bg-gray-100 shadow-[2px_4px_10px_0_hsla(0,0%,80%,.5)] overflow-hidden",
-                                inCart ? "border border-black" : ""
-                              )}
-                              onClick={() =>
-                                handleItemClick(item, index, cat.id)
-                              }
-                            >
-                              {inCart && (
-                                <span className="absolute top-2 right-2 bg-black text-white text-[10px] px-2 py-1 rounded-full">
-                                  В списке
-                                </span>
-                              )}
-                              {item.photo ? (
-                                <div className="w-full aspect-square overflow-hidden">
-                                  <img
-                                    src={item.photo}
-                                    alt={item.name}
-                                    className="w-full h-full object-cover rounded-t-xl"
-                                  />
-                                </div>
-                              ) : (
-                                <div className="w-full aspect-square bg-gray-200 rounded-t-xl" />
-                              )}
+                    Продолжить
+                  </Button>
+                  <button onClick={() => setCartStep(1)} className="text-xs font-medium text-gray-400 py-1">Вернуться к списку</button>
+                </div>
+              </div>
+            )}
 
-                              <div className="flex flex-1 flex-col gap-2 p-2">
-                                <div className="flex justify-between items-start">
-                                  <span className="font-medium text-sm break-words flex-1 pr-2">
-                                    {item.name}
-                                  </span>
-                                  {showWeight && (
-                                    <span className="text-gray-500 text-xs whitespace-nowrap">
-                                      {weightValue} гр
-                                    </span>
-                                  )}
-                                </div>
-
-                                <div className="mt-auto flex flex-col gap-2">
-                                  <div className="text-black font-semibold text-sm">
-                                    {item.price} ₽
-                                  </div>
-                                  {inCart ? (
-                                    <div className="flex items-center justify-between gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          decreaseCartItem(item.id);
-                                        }}
-                                        className="flex h-7 flex-1 items-center justify-center rounded-lg bg-[#D9D9D9] text-base"
-                                      >
-                                        −
-                                      </button>
-                                      <span className="text-sm font-semibold">
-                                        {quantity}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          addToCart(item.id);
-                                        }}
-                                        className="flex h-7 flex-1 items-center justify-center rounded-lg bg-[#FFEB5A] text-black text-xs font-semibold"
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        addToCart(item.id);
-                                      }}
-                                      className="flex w-full items-center justify-center rounded-lg bg-[#FFEB5A] py-1 text-xs font-medium text-black"
-                                    >
-                                      В заказ
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500 border border-dashed border-gray-300 rounded-xl p-6">
-                        В этой категории нет блюд по запросу
-                      </div>
-                    )}
+            {cartStep === 3 && (
+              <div className="space-y-6 max-h-[65vh] overflow-y-auto px-1 scrollbar-hide pb-4">
+                <div className="rounded-2xl border bg-gray-50 p-3 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Способ получения</span>
+                    <button onClick={() => setCartStep(2)} className="text-xs font-medium text-primary">Изменить</button>
                   </div>
-                );
-              })
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">{deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span>
+                    <Badge variant="secondary" className="text-[11px] px-2 py-1">
+                      {deliveryTime === 'asap' ? 'Как можно скорее' : `К времени: ${trimmedDesiredTime || 'указать'}`}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {deliveryMethod === 'delivery'
+                      ? (trimmedAddress || 'Укажите адрес доставки ниже')
+                      : `Заберёте в: ${addressWithoutCity || data.address}`}
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5 flex-1">
+                      <Label className="text-xs text-gray-500 ml-1">Имя</Label>
+                      <Input placeholder="Как вас зовут?" value={formData.name} onChange={e => setFormData(f => ({ ...f, name: e.target.value }))} className="rounded-xl h-11" />
+                    </div>
+                    <div className="space-y-1.5 flex-1">
+                      <Label className="text-xs text-gray-500 ml-1">Телефон</Label>
+                      <Input placeholder="+7 (___) ___" value={formData.phone} onChange={e => setFormData(f => ({ ...f, phone: e.target.value }))} className="rounded-xl h-11" />
+                    </div>
+                  </div>
+
+                  {deliveryMethod === 'delivery' && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-gray-500 ml-1">Адрес доставки</Label>
+                      <Input placeholder="Улица, дом, подъезд" value={formData.address} onChange={e => setFormData(f => ({ ...f, address: e.target.value }))} className="rounded-xl h-11" />
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <Label className="text-xs font-bold uppercase text-gray-400">Способ оплаты</Label>
+                    <RadioGroup value={formData.paymentMethod} onValueChange={v => setFormData(f => ({ ...f, paymentMethod: v }))} className="flex flex-col gap-2">
+                      {availablePaymentMethods.map((method) => (
+                        <div key={method} className={cn("flex items-center space-x-3 p-3 rounded-xl border transition-all cursor-pointer", formData.paymentMethod === method ? "border-black bg-gray-50" : "bg-white")}>
+                          <RadioGroupItem value={method} id={`pay-${method}`} />
+                          <Label htmlFor={`pay-${method}`} className="flex-1 cursor-pointer font-medium">{paymentLabels[method]}</Label>
+                        </div>
+                      ))}
+                    </RadioGroup>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-gray-500 ml-1">Комментарий к заказу</Label>
+                    <Textarea placeholder="Пожелания, код домофона и т.д." value={formData.comment} onChange={e => setFormData(f => ({ ...f, comment: e.target.value }))} className="rounded-xl resize-none" rows={2} />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t flex flex-col gap-3">
+                  <Button
+                    disabled={isSubmitting || !canSubmitOrder}
+                    className="w-full h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold"
+                    onClick={handleSubmitOrder}
+                  >
+                    {isSubmitting ? <Loader2 className="animate-spin" /> : `Заказать на ${formatPrice(totalPrice)}`}
+                  </Button>
+                  <button onClick={() => setCartStep(2)} className="text-xs font-medium text-gray-400 py-1">Вернуться к доставке</button>
+                </div>
+              </div>
+            )}
+
+            {cartStep === 4 && orderResult && (
+              <div className="py-8 text-center space-y-6">
+                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-2 animate-bounce">
+                  <Check className="w-10 h-10" strokeWidth={3} />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black mb-1">Заказ #{orderResult.number}</h3>
+                  <p className="text-gray-500">Мы уже начали его готовить!</p>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-2xl text-left text-sm space-y-2">
+                  <div className="flex justify-between"><span>Клиент:</span><span className="font-bold">{formData.name}</span></div>
+                  <div className="flex justify-between"><span>Тип:</span><span className="font-bold">{deliveryMethod === 'delivery' ? 'Доставка' : 'Самовывоз'}</span></div>
+                  <div className="flex justify-between"><span>Сумма:</span><span className="font-bold">{formatPrice(totalPrice)}</span></div>
+                </div>
+                <Button className="w-full h-12 rounded-2xl border-2 border-black bg-white text-black hover:bg-gray-50" onClick={() => { setIsCartOpen(false); clearCart(); }}>Вернуться в меню</Button>
+              </div>
             )}
           </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
-      {cartCount > 0 && (
-        <>
-          <button
-            type="button"
-            onClick={() => setIsCartOpen(true)}
-            className="fixed bottom-5 right-4 z-40 w-14 h-14 rounded-full bg-black text-white flex items-center justify-center shadow-lg"
-          >
-            <ShoppingCart className="w-6 h-6" />
-            <span className="absolute -top-1 -right-1 bg-[#FFEB5A] text-black text-xs font-semibold px-2 py-0.5 rounded-full">
-              {cartCount}
-            </span>
-          </button>
-
-          <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
-            <DialogContent className="w-[92vw] max-w-[420px] p-4 sm:p-5 space-y-4 rounded-3xl">
-              <DialogTitle className="text-lg font-semibold">
-                Мой список
-              </DialogTitle>
-              <div className="flex items-center justify-between text-xs text-gray-500 gap-3">
-                <span>Позиций: {uniqueItemCount}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearCart();
-                    setIsCartOpen(false);
-                  }}
-                  className="flex items-center gap-1 rounded-md border border-gray-200 px-3 py-1 text-xs text-gray-700 hover:bg-gray-100"
-                >
-                  <span>Очистить список</span>
-                </button>
-              </div>
-              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-0">
-                {cartDetails.map((item) => (
-                  <div
-                    key={item.id}
-                    className="border border-gray-100 rounded-xl p-3 space-y-2"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {item.name}
-                        </p>
-                        <p className="text-xs text-gray-500 truncate">
-                          {item.categoryName}
-                        </p>
-                      </div>
-                      <span className="text-sm font-semibold whitespace-nowrap">
-                        {item.price * item.quantity} ₽
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => decreaseCartItem(item.id)}
-                          className="w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
-                        >
-                          −
-                        </button>
-                        <span className="text-sm font-semibold w-6 text-center">
-                          {item.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => addToCart(item.id)}
-                          className="w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
-                        >
-                          +
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeFromCart(item.id)}
-                        className="text-xs text-red-500"
-                      >
-                        Удалить
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                <span className="text-sm text-gray-600">Итого</span>
-                <span className="text-lg font-semibold">{totalPrice} ₽</span>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </>
-      )}
-
-      {/* Popup для блюда */}
+      {/* Item Details Dialog */}
       <Dialog open={!!selectedItem} onOpenChange={() => setSelectedItem(null)}>
-        <DialogContent className="[&>button]:rounded-full [&>button]:p-2 [&>button]:bg-[#D9D9D9] w-[92vw] max-w-[440px] p-0 overflow-hidden rounded-3xl">
-          <VisuallyHidden>
-            <DialogTitle>{selectedItem?.name}</DialogTitle>
-          </VisuallyHidden>
-
-          {/* Photo + Badges */}
+        <DialogContent className="max-w-[420px] w-[95vw] p-0 rounded-3xl overflow-hidden gap-0">
+          <VisuallyHidden><DialogTitle>{selectedItem?.name}</DialogTitle></VisuallyHidden>
           {selectedItem?.photo && (
-            <div className="relative w-full h-[220px] sm:h-[260px]">
-              <img
-                src={selectedItem.photo}
-                alt={selectedItem.name}
-                className="w-full h-full object-cover rounded-sm"
-              />
-              {currentCat && (
-                <span className="absolute top-3 left-3 bg-[#90FF55] text-black text-xs px-3 py-1 rounded-full">
-                  {currentCat.name}
-                </span>
-              )}
-              <span className="absolute bottom-3 right-3 bg-[#FFEB5A] text-black text-sm px-3 py-1 rounded-full">
-                {`${selectedItem.price} ₽`}
-              </span>
+            <div className="w-full aspect-[4/3] relative">
+              <img src={selectedItem.photo} className="w-full h-full object-cover" />
+              <Badge className="absolute top-3 left-3 bg-white/90 text-black hover:bg-white border-none shadow-sm">{currentCat?.name}</Badge>
             </div>
           )}
+          <div className="p-6 pb-8 space-y-6">
+            <div className="flex justify-between items-start">
+              <h2 className="text-2xl font-bold">{selectedItem?.name}</h2>
+              <span className="text-xl font-black">{selectedItem ? formatPrice(selectedItem.price) : ""}</span>
+            </div>
 
-          {/* Content */}
-          <div className="p-4 sm:p-5 space-y-4">
-            {/* Name */}
-            <h2 className="text-center text-xl font-normal text-[#222222]">
-              {selectedItem?.name}
-            </h2>
+            <p className="text-gray-600 leading-relaxed">{selectedItem?.description || "Нет описания"}</p>
 
-            {/* Description */}
-            <p className="text-sm text-gray-600 break-words">
-              {selectedItem?.description || "Нет описания"}
-            </p>
-
-            {/* KBJU + Weight */}
-            <div className="flex justify-between items-center text-xs text-gray-600 pt-2">
-              <div className="flex gap-4 text-center">
-                {hasNutritionValue(selectedItem?.calories) && (
+            {selectedItem && hasSelectedItemNutrition && (
+              <div className="grid grid-cols-4 gap-2 text-center py-4 border-y border-dashed">
+                {hasNutritionValue(selectedItem.calories) && (
                   <div>
                     <p className="font-normal text-black">Ккал</p>
                     <p>{selectedItem.calories}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.proteins) && (
+
+                {hasNutritionValue(selectedItem.proteins) && (
                   <div>
                     <p className="font-normal text-black">Белки</p>
                     <p>{selectedItem.proteins}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.fats) && (
+
+                {hasNutritionValue(selectedItem.fats) && (
                   <div>
                     <p className="font-normal text-black">Жиры</p>
                     <p>{selectedItem.fats}</p>
                   </div>
                 )}
-                {hasNutritionValue(selectedItem?.carbs) && (
+
+                {hasNutritionValue(selectedItem.carbs) && (
                   <div>
                     <p className="font-normal text-black">Углеводы</p>
                     <p>{selectedItem.carbs}</p>
                   </div>
                 )}
               </div>
-              {showSelectedWeight && (
-                <div className="text-right">
-                  <p className="font-normal text-black"></p>
-                  <p>{selectedItemWeight} гр</p>
-                </div>
-              )}
-            </div>
+            )}
 
-            {/* Управление */}
-            <div className="flex flex-col gap-3 sm:flex-row-reverse sm:items-center sm:justify-between mt-6">
-              <div className="flex items-center gap-2 sm:gap-3 justify-between sm:justify-start w-full sm:w-auto">
-                <Button
-                  onClick={handlePrevItem}
-                  disabled={isFirstItem()}
-                  className={`w-24 h-11 p-0 flex items-center justify-center rounded-[8px] ${
-                    isFirstItem()
-                      ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
-                      : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
-                  }`}
-                >
-                  <ArrowLeftIcon />
-                </Button>
-                <Button
-                  onClick={handleNextItem}
-                  disabled={isLastItem()}
-                  className={`w-24 h-11 p-0 flex items-center justify-center rounded-[8px] ${
-                    isLastItem()
-                      ? "bg-[#D9D9D9] text-gray-600 cursor-not-allowed"
-                      : "bg-[#FFEB5A] hover:bg-[#e6d84d]"
-                  }`}
-                >
-                  <ArrowRightIcon />
-                </Button>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex gap-2">
+                <Button variant="secondary" className="flex-1 h-12 rounded-2xl" disabled={isFirstItem()} onClick={handlePrevItem}><ArrowLeft className="w-4 h-4" /></Button>
+                <div className="flex-[2] flex bg-gray-100 rounded-2xl p-1 items-center">
+                  <button onClick={() => decreaseCartItem(selectedItem!.id)} className="w-10 h-10 rounded-xl bg-white border shadow-sm flex items-center justify-center text-xl">-</button>
+                  <span className="flex-1 text-center font-black text-lg">{cartItems[selectedItem?.id || 0] || 0}</span>
+                  <button onClick={() => addToCart(selectedItem!.id)} className="w-10 h-10 rounded-xl bg-[#FFEB5A] shadow-sm flex items-center justify-center text-xl">+</button>
+                </div>
+                <Button variant="secondary" className="flex-1 h-12 rounded-2xl" disabled={isLastItem()} onClick={handleNextItem}><ArrowLeft className="w-4 h-4 rotate-180" /></Button>
               </div>
-              <div className="flex items-center gap-2 sm:gap-3 justify-end w-full sm:w-auto ">
-                {" "}
-                {selectedItem && selectedItemQuantity > 0 ? (
-                  <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2 w-full">
-                    {" "}
-                    <button
-                      type="button"
-                      onClick={() => decreaseCartItem(selectedItem.id)}
-                      className="w-full sm:w-8 h-8 rounded-lg bg-[#D9D9D9] text-base flex items-center justify-center"
-                    >
-                      {" "}
-                      −{" "}
-                    </button>{" "}
-                    <span className="text-sm font-semibold w-6 text-center">
-                      {selectedItemQuantity}
-                    </span>{" "}
-                    <button
-                      type="button"
-                      onClick={() => addToCart(selectedItem.id)}
-                      className="w-full sm:w-8 h-8 rounded-lg bg-[#FFEB5A] text-black text-base flex items-center justify-center"
-                    >
-                      {" "}
-                      +{" "}
-                    </button>{" "}
-                  </div>
-                ) : selectedItem ? (
-                  <Button
-                    onClick={() => addToCart(selectedItem.id)}
-                    className="h-11 px-6 rounded-lg bg-[#FFEB5A] text-black text-sm font-semibold w-full"
-                  >
-                    {" "}
-                    В заказ{" "}
-                  </Button>
-                ) : null}{" "}
-              </div>
+              <Button className="h-12 rounded-2xl bg-black text-white hover:bg-neutral-800 font-bold" onClick={() => setSelectedItem(null)}>Готово</Button>
             </div>
           </div>
         </DialogContent>

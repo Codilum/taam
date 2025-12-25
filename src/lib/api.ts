@@ -1,4 +1,4 @@
-export const API_URL = "http://localhost:8003/api";
+export const API_URL = "http://taam.menu/api";
 
 export type ApiError = {
   message?: string;
