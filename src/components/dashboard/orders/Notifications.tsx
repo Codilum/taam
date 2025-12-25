@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { Volume2, VolumeX, Bell, Package, ChefHat, CheckCircle2, XCircle, Loader2, RefreshCw } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -35,11 +36,12 @@ function formatTime(dateStr: string): string {
 export default function Notifications({ activeTeam }: { activeTeam: string }) {
     const [notifications, setNotifications] = useState<OrderNotification[]>([])
     const [loading, setLoading] = useState(false)
-    const [soundEnabled, setSoundEnabled] = useState(false)
+    const [soundEnabled, setSoundEnabled] = useState(true)
     const [autoRefresh, setAutoRefresh] = useState(false)
     const [archived, setArchived] = useState<OrderNotification[]>([])
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const prevCount = useRef<number>(0)
+    const router = useRouter()
 
     const loadNotifications = useCallback(async () => {
         if (!activeTeam) return
@@ -92,6 +94,15 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
 
     const toggleSound = () => {
         setSoundEnabled(prev => !prev)
+    }
+
+    const openOrderInfo = (orderNumber: string) => {
+        if (!activeTeam) return
+        const params = new URLSearchParams()
+        params.set("block", "orders")
+        params.set("team", activeTeam)
+        params.set("orderNumber", orderNumber)
+        router.push(`/dashboard?${params.toString()}`)
     }
 
     const archiveNotification = async (notif: OrderNotification) => {
@@ -220,6 +231,9 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
                                                 <p className="text-sm text-muted-foreground">{notif.message}</p>
                                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                                     <span>{formatTime(notif.created_at)}</span>
+                                                    <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openOrderInfo(notif.order_number)}>
+                                                        Инфо
+                                                    </Button>
                                                     <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => archiveNotification(notif)}>
                                                         В архив
                                                     </Button>
@@ -238,7 +252,12 @@ export default function Notifications({ activeTeam }: { activeTeam: string }) {
                                                 <div className="flex-1 min-w-0">
                                                     <div className="font-medium">Заказ #{notif.order_number}</div>
                                                     <div className="line-clamp-2">{notif.message}</div>
-                                                    <div className="text-xs mt-1">{formatTime(notif.created_at)}</div>
+                                                    <div className="flex items-center gap-2 text-xs mt-1">
+                                                        <span>{formatTime(notif.created_at)}</span>
+                                                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openOrderInfo(notif.order_number)}>
+                                                            Инфо
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))}
