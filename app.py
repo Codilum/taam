@@ -4102,8 +4102,7 @@ def grant_trial_subscription(restaurant_id: int, current_user: dict = Depends(ge
 
 
 @app.get("/api/admin/restaurants/{restaurant_id}/subscription/grant-internal")
-def grant_internal_subscription(restaurant_id: int, current_user: dict = Depends(get_current_user)):
-    ensure_admin_access(current_user["email"])
+def grant_internal_subscription(restaurant_id: int):
 
     plan = get_subscription_plan_by_code("internal")
     if not plan:

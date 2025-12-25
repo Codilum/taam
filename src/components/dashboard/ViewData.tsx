@@ -873,7 +873,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                         rel="noopener noreferrer"
                         className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 transition hover:text-black"
                       >
-                        <Send className="h-5 w-5" />
+                        <Send className="h-4 w-4" />
                       </a>
                     )}
                     {data.whatsapp && (
