@@ -18,6 +18,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { Button } from "@/components/ui/button"
 import ViewData from "@/components/dashboard/ViewData"
 import Categories from "@/components/dashboard/menu/Categories"
 import MenuItems from "@/components/dashboard/menu/MenuItems"
@@ -35,9 +36,9 @@ import Terminal from "@/components/dashboard/orders/Terminal"
 import Notifications from "@/components/dashboard/orders/Notifications"
 import Statistics from "@/components/dashboard/analytics/Statistics"
 import { Skeleton } from "@/components/ui/skeleton"
-import { userService, restaurantService } from "@/services"
+import { userService, restaurantService, orderService } from "@/services"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertCircleIcon } from "lucide-react"
+import { AlertCircleIcon, Bell } from "lucide-react"
 
 type AccountData = {
   email: string
@@ -147,6 +148,7 @@ function DashboardInner() {
   const [activeTeam, setActiveTeam] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<AccountData | null>(null)
+  const [notificationsCount, setNotificationsCount] = useState(0)
 
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -198,6 +200,21 @@ function DashboardInner() {
     },
     [activeBlock, goTo],
   )
+
+  const loadNotificationsCount = useCallback(async () => {
+    if (!activeTeam) {
+      setNotificationsCount(0)
+      return
+    }
+    try {
+      const data = await orderService.getNotifications(activeTeam)
+      const list = Array.isArray(data.notifications) ? data.notifications : []
+      const unread = list.filter((item) => !item.read).length
+      setNotificationsCount(unread)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [activeTeam])
 
   useEffect(() => {
     const blockParam = searchParams.get("block")
@@ -271,6 +288,12 @@ function DashboardInner() {
       window.removeEventListener("dashboard:navigate", handler as EventListener)
   }, [activeBlock, activeTeam, goTo])
 
+  useEffect(() => {
+    loadNotificationsCount()
+    const interval = setInterval(loadNotificationsCount, 30000)
+    return () => clearInterval(interval)
+  }, [loadNotificationsCount])
+
   const blockComponents: { [key: string]: ReactNode } = {
     view: <ViewData activeTeam={activeTeam} />,
     "edit-menu-categories": <Categories activeTeam={activeTeam} />,
@@ -307,19 +330,35 @@ function DashboardInner() {
           setActiveTeam={changeTeam}
         />
         <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-            <div className="flex items-center gap-2 px-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator
-                orientation="vertical"
-                className="mr-2 data-[orientation=vertical]:h-4"
-              />
-              <DynamicBreadcrumb
-                activeBlock={activeBlock}
-                isProfileComplete={!!profile?.is_profile_complete}
-              />
-            </div>
-          </header>
+        <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+          <div className="flex items-center gap-2 px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator
+              orientation="vertical"
+              className="mr-2 data-[orientation=vertical]:h-4"
+            />
+            <DynamicBreadcrumb
+              activeBlock={activeBlock}
+              isProfileComplete={!!profile?.is_profile_complete}
+            />
+          </div>
+          <div className="flex items-center gap-3 px-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => changeBlock("notifications")}
+              className="relative"
+              aria-label="Уведомления"
+            >
+              <Bell className="size-5" />
+              {notificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                  {notificationsCount > 9 ? "9+" : notificationsCount}
+                </span>
+              )}
+            </Button>
+          </div>
+        </header>
           <div className="p-4 space-y-4">
             <Alert variant="default">
               <AlertCircleIcon />
@@ -343,7 +382,7 @@ function DashboardInner() {
         setActiveTeam={changeTeam}
       />
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator
@@ -354,6 +393,22 @@ function DashboardInner() {
               activeBlock={activeBlock}
               isProfileComplete={true}
             />
+          </div>
+          <div className="flex items-center gap-3 px-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => changeBlock("notifications")}
+              className="relative"
+              aria-label="Уведомления"
+            >
+              <Bell className="size-5" />
+              {notificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                  {notificationsCount > 9 ? "9+" : notificationsCount}
+                </span>
+              )}
+            </Button>
           </div>
         </header>
         {blockComponents[activeBlock] || <ViewData activeTeam={activeTeam} />}

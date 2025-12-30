@@ -1,12 +1,16 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Loader2, RefreshCcw, ShieldCheck, Users } from "lucide-react"
+import { Loader2, RefreshCcw, ShieldCheck, Users, UserPlus, PencilLine } from "lucide-react"
 import { adminService } from "@/services"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
   Table,
@@ -25,6 +29,7 @@ type AdminUser = {
   phone: string | null
   payment_method_type: string | null
   payment_method_number: string | null
+  role: "admin" | "user"
 }
 
 type AdminRestaurant = {
@@ -114,6 +119,27 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
+  const [editLoading, setEditLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [createForm, setCreateForm] = useState({
+    email: "",
+    password: "",
+    first_name: "",
+    last_name: "",
+    phone: "",
+    role: "user" as "admin" | "user",
+    verified: true,
+  })
+  const [editForm, setEditForm] = useState({
+    first_name: "",
+    last_name: "",
+    phone: "",
+    role: "user" as "admin" | "user",
+    verified: true,
+    password: "",
+  })
 
   const loadOverview = useCallback(async () => {
     setRefreshing(true)
@@ -133,6 +159,18 @@ export function AdminDashboard() {
   useEffect(() => {
     loadOverview()
   }, [loadOverview])
+
+  useEffect(() => {
+    if (!editingUser) return
+    setEditForm({
+      first_name: editingUser.first_name || "",
+      last_name: editingUser.last_name || "",
+      phone: editingUser.phone || "",
+      role: editingUser.role || "user",
+      verified: editingUser.verified,
+      password: "",
+    })
+  }, [editingUser])
 
   const summaryItems = useMemo(() => {
     if (!data?.summary) return []
@@ -159,6 +197,62 @@ export function AdminDashboard() {
       Обновить данные
     </Button>
   )
+
+  const handleCreateUser = async () => {
+    if (!createForm.email || !createForm.password) {
+      setActionError("Email и пароль обязательны")
+      return
+    }
+    setCreating(true)
+    setActionError(null)
+    try {
+      await adminService.createUser({
+        email: createForm.email,
+        password: createForm.password,
+        first_name: createForm.first_name || null,
+        last_name: createForm.last_name || null,
+        phone: createForm.phone || null,
+        role: createForm.role,
+        verified: createForm.verified,
+      })
+      setCreateForm({
+        email: "",
+        password: "",
+        first_name: "",
+        last_name: "",
+        phone: "",
+        role: "user",
+        verified: true,
+      })
+      await loadOverview()
+    } catch (err: any) {
+      setActionError(err.detail || err.message || "Не удалось создать аккаунт")
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleEditSave = async () => {
+    if (!editingUser) return
+    setEditLoading(true)
+    setActionError(null)
+    try {
+      await adminService.updateUser(editingUser.email, {
+        first_name: editForm.first_name || null,
+        last_name: editForm.last_name || null,
+        phone: editForm.phone || null,
+        role: editForm.role,
+        verified: editForm.verified,
+        password: editForm.password || null,
+      })
+      setEditingUser(null)
+      await loadOverview()
+    } catch (err: any) {
+      setActionError(err.detail || err.message || "Не удалось обновить пользователя")
+    } finally {
+      setEditLoading(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -216,6 +310,92 @@ export function AdminDashboard() {
         </div>
 
         <Card className="shadow-sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <UserPlus className="size-5" /> Создание аккаунта
+            </CardTitle>
+            <CardDescription>Добавьте нового пользователя или администратора</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {actionError && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-600">
+                {actionError}
+              </div>
+            )}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="create-email">Email</Label>
+                <Input
+                  id="create-email"
+                  type="email"
+                  value={createForm.email}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, email: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-password">Пароль</Label>
+                <Input
+                  id="create-password"
+                  type="password"
+                  value={createForm.password}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, password: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-first-name">Имя</Label>
+                <Input
+                  id="create-first-name"
+                  value={createForm.first_name}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, first_name: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-last-name">Фамилия</Label>
+                <Input
+                  id="create-last-name"
+                  value={createForm.last_name}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, last_name: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="create-phone">Телефон</Label>
+                <Input
+                  id="create-phone"
+                  value={createForm.phone}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, phone: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Тип аккаунта</Label>
+                <Select
+                  value={createForm.role}
+                  onValueChange={(value: "admin" | "user") =>
+                    setCreateForm((prev) => ({ ...prev, role: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите роль" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">Пользователь</SelectItem>
+                    <SelectItem value="admin">Администратор</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Badge variant={createForm.verified ? "default" : "outline"}>
+                {createForm.verified ? "Подтвержден" : "Не подтвержден"}
+              </Badge>
+              <Button onClick={handleCreateUser} disabled={creating}>
+                {creating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Создать аккаунт
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm">
           <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
@@ -232,8 +412,10 @@ export function AdminDashboard() {
                   <TableHead>Email</TableHead>
                   <TableHead>Имя</TableHead>
                   <TableHead>Телефон</TableHead>
+                  <TableHead>Роль</TableHead>
                   <TableHead>Платёжный метод</TableHead>
                   <TableHead>Статус</TableHead>
+                  <TableHead className="text-right">Действия</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -244,6 +426,11 @@ export function AdminDashboard() {
                       {[user.first_name, user.last_name].filter(Boolean).join(" ") || "—"}
                     </TableCell>
                     <TableCell>{user.phone || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                        {user.role === "admin" ? "Админ" : "Пользователь"}
+                      </Badge>
+                    </TableCell>
                     <TableCell>
                       {user.payment_method_type ? (
                         <div className="flex flex-col">
@@ -262,6 +449,11 @@ export function AdminDashboard() {
                       <Badge variant={user.verified ? "default" : "outline"}>
                         {user.verified ? "Подтвержден" : "Не подтвержден"}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" onClick={() => setEditingUser(user)}>
+                        <PencilLine className="size-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -445,7 +637,78 @@ export function AdminDashboard() {
           </CardContent>
         </Card>
       </div>
+      <Dialog open={!!editingUser} onOpenChange={(open) => setEditingUser(open ? editingUser : null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Редактировать пользователя</DialogTitle>
+            <DialogDescription>{editingUser?.email}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-first-name">Имя</Label>
+              <Input
+                id="edit-first-name"
+                value={editForm.first_name}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, first_name: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-last-name">Фамилия</Label>
+              <Input
+                id="edit-last-name"
+                value={editForm.last_name}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, last_name: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-phone">Телефон</Label>
+              <Input
+                id="edit-phone"
+                value={editForm.phone}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, phone: event.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Тип аккаунта</Label>
+              <Select
+                value={editForm.role}
+                onValueChange={(value: "admin" | "user") =>
+                  setEditForm((prev) => ({ ...prev, role: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите роль" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="user">Пользователь</SelectItem>
+                  <SelectItem value="admin">Администратор</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-password">Новый пароль</Label>
+              <Input
+                id="edit-password"
+                type="password"
+                value={editForm.password}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, password: event.target.value }))}
+              />
+            </div>
+            <Badge variant={editForm.verified ? "default" : "outline"}>
+              {editForm.verified ? "Подтвержден" : "Не подтвержден"}
+            </Badge>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingUser(null)}>
+              Отмена
+            </Button>
+            <Button onClick={handleEditSave} disabled={editLoading}>
+              {editLoading ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Сохранить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
-

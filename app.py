@@ -69,15 +69,26 @@ if single_admin_email:
     ADMIN_EMAILS.add(single_admin_email.strip().lower())
 
 
-def ensure_admin_access(email: str) -> None:
-    normalized = (email or "").strip().lower()
+def ensure_admin_access(current_user: dict) -> None:
+    normalized = (current_user.get("email") or "").strip().lower()
+    role = (current_user.get("role") or "user").strip().lower()
+    if role == "admin":
+        return
+    if ADMIN_EMAILS and normalized in ADMIN_EMAILS:
+        return
     if not ADMIN_EMAILS:
         raise HTTPException(
             status_code=403,
             detail="Админ-панель не настроена. Укажите ADMIN_EMAIL или ADMIN_EMAILS в настройках сервера.",
         )
-    if not normalized or normalized not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к админ-панели")
+    raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к админ-панели")
+
+
+def normalize_user_role(role: Optional[str]) -> str:
+    normalized = (role or "user").strip().lower()
+    if normalized not in {"admin", "user"}:
+        raise HTTPException(status_code=400, detail="Некорректный тип аккаунта")
+    return normalized
 
 
 def format_datetime(value: datetime | None) -> str | None:
@@ -380,7 +391,8 @@ def init_db():
             photo TEXT,
             phone TEXT,
             payment_method_type TEXT,
-            payment_method_number TEXT
+            payment_method_number TEXT,
+            role TEXT DEFAULT 'user'
         )
     ''')
     c.execute('''
@@ -517,6 +529,10 @@ def init_db():
     for column_name in ["ready_at", "courier_at", "delivered_at"]:
         if column_name not in order_columns:
             c.execute(f"ALTER TABLE orders ADD COLUMN {column_name} TEXT")
+    c.execute("PRAGMA table_info(users)")
+    user_columns = [row[1] for row in c.fetchall()]
+    if "role" not in user_columns:
+        c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
     c.execute("PRAGMA table_info(subscription_plans)")
     subscription_columns = [row[1] for row in c.fetchall()]
     if "is_hidden" not in subscription_columns:
@@ -1412,12 +1428,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=401, detail="Invalid token")
     conn = sqlite3.connect("users.db")
     c = conn.cursor()
-    c.execute("SELECT verified FROM users WHERE email = ?", (email,))
+    c.execute("SELECT verified, role FROM users WHERE email = ?", (email,))
     user = c.fetchone()
     conn.close()
     if not user or not user[0]:
         raise HTTPException(status_code=401, detail="Invalid or unverified user")
-    return {"email": email}
+    return {"email": email, "role": user[1] or "user"}
 
 # === Регистрация: отправка кода (без изменений) ===
 @app.post("/api/register")
@@ -1458,9 +1474,9 @@ def verify_code(req: VerifyCodeRequest):
 
     # Создаём пользователя
     c.execute(
-        "INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (req.email, password_hash, True, None, None, None, None, None, None)
+        "INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number, role) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (req.email, password_hash, True, None, None, None, None, None, None, "user")
     )
 
     # Создаём ресторан по умолчанию
@@ -1506,6 +1522,26 @@ class CreateTestingUserRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     restaurant_name: Optional[str] = None
+
+
+class AdminUserCreateRequest(BaseModel):
+    email: EmailStr
+    password: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = "user"
+    verified: Optional[bool] = True
+    restaurant_name: Optional[str] = None
+
+
+class AdminUserUpdateRequest(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    verified: Optional[bool] = None
+    password: Optional[str] = None
 
 @app.post("/api/forgot-password")
 def forgot_password(req: ForgotPasswordRequest):
@@ -1570,8 +1606,8 @@ def create_testing_user(req: CreateTestingUserRequest):
     else:
         c.execute(
             """
-            INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 email,
@@ -1583,6 +1619,7 @@ def create_testing_user(req: CreateTestingUserRequest):
                 None,
                 None,
                 None,
+                "user",
             ),
         )
         created_user = True
@@ -1663,9 +1700,129 @@ def create_testing_user(req: CreateTestingUserRequest):
     }
 
 
+@app.post("/api/admin/users")
+def create_admin_user(req: AdminUserCreateRequest, current_user: dict = Depends(get_current_user)):
+    ensure_admin_access(current_user)
+
+    email = req.email.lower()
+    role = normalize_user_role(req.role)
+    verified = bool(req.verified) if req.verified is not None else True
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+
+    c.execute("SELECT email FROM users WHERE email = ?", (email,))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Пользователь уже существует")
+
+    c.execute(
+        """
+        INSERT INTO users (email, password_hash, verified, first_name, last_name, photo, phone, payment_method_type, payment_method_number, role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            email,
+            hash_password(req.password),
+            verified,
+            req.first_name,
+            req.last_name,
+            None,
+            req.phone,
+            None,
+            None,
+            role,
+        ),
+    )
+
+    c.execute(
+        "SELECT id FROM restaurants WHERE owner_email = ? ORDER BY id ASC",
+        (email,),
+    )
+    restaurant_rows = c.fetchall()
+
+    if not restaurant_rows:
+        name_value = req.restaurant_name or "Моё заведение"
+        c.execute(
+            """
+            INSERT INTO restaurants (owner_email, photo, name, description, city, address, hours, instagram, telegram, vk, whatsapp, features, type, phone, subdomain)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                email,
+                None,
+                name_value,
+                "Описание заведения",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+
+    return {"email": email, "role": role, "verified": verified}
+
+
+@app.patch("/api/admin/users/{email}")
+def update_admin_user(email: str, req: AdminUserUpdateRequest, current_user: dict = Depends(get_current_user)):
+    ensure_admin_access(current_user)
+
+    normalized_email = email.lower()
+    updates = []
+    values: list[Any] = []
+
+    if req.first_name is not None:
+        updates.append("first_name = ?")
+        values.append(req.first_name)
+    if req.last_name is not None:
+        updates.append("last_name = ?")
+        values.append(req.last_name)
+    if req.phone is not None:
+        updates.append("phone = ?")
+        values.append(req.phone)
+    if req.verified is not None:
+        updates.append("verified = ?")
+        values.append(int(bool(req.verified)))
+    if req.role is not None:
+        updates.append("role = ?")
+        values.append(normalize_user_role(req.role))
+    if req.password:
+        updates.append("password_hash = ?")
+        values.append(hash_password(req.password))
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Нет полей для обновления")
+
+    values.append(normalized_email)
+
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("SELECT email FROM users WHERE email = ?", (normalized_email,))
+    if not c.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    query = f"UPDATE users SET {', '.join(updates)} WHERE email = ?"
+    c.execute(query, tuple(values))
+    conn.commit()
+    conn.close()
+
+    return {"message": "Пользователь обновлен"}
+
+
 @app.get("/api/admin/overview")
 def get_admin_overview(current_user: dict = Depends(get_current_user)):
-    ensure_admin_access(current_user["email"])
+    ensure_admin_access(current_user)
 
     conn = sqlite3.connect("users.db")
     conn.row_factory = sqlite3.Row
@@ -1706,7 +1863,7 @@ def get_admin_overview(current_user: dict = Depends(get_current_user)):
     users_cursor = conn.cursor()
     users_cursor.execute(
         """
-        SELECT email, verified, first_name, last_name, phone, payment_method_type, payment_method_number
+        SELECT email, verified, first_name, last_name, phone, payment_method_type, payment_method_number, role
         FROM users
         ORDER BY email ASC
         """
@@ -1720,6 +1877,7 @@ def get_admin_overview(current_user: dict = Depends(get_current_user)):
             "phone": row["phone"],
             "payment_method_type": row["payment_method_type"],
             "payment_method_number": row["payment_method_number"],
+            "role": row["role"] or "user",
         }
         for row in users_cursor.fetchall()
     ]
