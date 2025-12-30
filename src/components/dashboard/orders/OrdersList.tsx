@@ -203,25 +203,24 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead className="w-[80px]">№</TableHead>
-                                    <TableHead>Статус</TableHead>
-                                    <TableHead>К оплате</TableHead>
-                                    <TableHead>Телефон</TableHead>
-                                    <TableHead>Имя</TableHead>
-                                    <TableHead>Способ оплаты</TableHead>
-                                    <TableHead className="w-[50px]"></TableHead>
+                                    <TableHead className="w-[70px] text-xs">№</TableHead>
+                                    <TableHead className="text-xs">Статус</TableHead>
+                                    <TableHead className="text-xs">К оплате</TableHead>
+                                    <TableHead className="text-xs">Телефон</TableHead>
+                                    <TableHead className="text-xs">Способ оплаты</TableHead>
+                                    <TableHead className="w-[44px]"></TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {loading ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-10">
+                                        <TableCell colSpan={6} className="text-center py-10">
                                             <Loader2 className="size-6 animate-spin mx-auto" />
                                         </TableCell>
                                     </TableRow>
                                 ) : orders.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-10 text-muted-foreground">
+                                        <TableCell colSpan={6} className="text-center py-10 text-muted-foreground">
                                             Заказов пока нет
                                         </TableCell>
                                     </TableRow>
@@ -232,18 +231,17 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                                             className={`cursor-pointer hover:bg-muted/50 ${selectedOrder?.id === order.id ? "bg-muted" : ""}`}
                                             onClick={() => toggleSelectedOrder(order)}
                                         >
-                                            <TableCell className="font-medium">#{order.number}</TableCell>
-                                            <TableCell>
-                                                <Badge className={`${STATUS_COLORS[order.status]} gap-1`}>
+                                            <TableCell className="font-medium text-xs">#{order.number}</TableCell>
+                                            <TableCell className="text-xs">
+                                                <Badge className={`${STATUS_COLORS[order.status]} gap-1 text-[11px]`}>
                                                     {STATUS_ICONS[order.status]}
                                                     {STATUS_LABELS[order.status]}
                                                 </Badge>
                                             </TableCell>
-                                            <TableCell className="font-semibold">{formatCurrency(order.amount, order.currency)}</TableCell>
-                                            <TableCell>{order.customer_phone}</TableCell>
-                                            <TableCell>{order.customer_name}</TableCell>
-                                            <TableCell>{order.payment_method}</TableCell>
-                                            <TableCell>
+                                            <TableCell className="font-semibold text-xs">{formatCurrency(order.amount, order.currency)}</TableCell>
+                                            <TableCell className="text-xs">{order.customer_phone}</TableCell>
+                                            <TableCell className="text-xs">{order.payment_method}</TableCell>
+                                            <TableCell className="px-1">
                                                 <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); toggleSelectedOrder(order); }}>
                                                     <Eye className="size-4" />
                                                 </Button>
@@ -355,6 +353,9 @@ export default function OrdersList({ activeTeam }: { activeTeam: string }) {
                                         <Separator />
                                         <div>
                                             <h4 className="font-semibold mb-2">Внутренний комментарий</h4>
+                                            <p className="text-xs text-muted-foreground mb-1">
+                                                Автор: {selectedOrder.customer_name} · ID: {selectedOrder.id}
+                                            </p>
                                             <p className="text-sm text-muted-foreground">{selectedOrder.comment || "—"}</p>
                                         </div>
                                     </>
