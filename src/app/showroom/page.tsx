@@ -235,41 +235,66 @@ export default function ShowroomCatalogPage() {
     <div className="min-h-screen bg-gray-100">
       <div className="max-w-6xl mx-auto p-4 space-y-6">
         <section className="bg-white rounded-t-3xl rounded-b-2xl p-6 shadow-sm space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge className="rounded-full px-3 py-1">Шоурум</Badge>
-            <h1 className="text-2xl font-semibold">Каталог демонстрационных товаров</h1>
-          </div>
-          <p className="text-muted-foreground max-w-2xl">
-            Витринная страница с мок‑данными: здесь можно посмотреть ассортимент шоурума,
-            включить фильтры, открыть карточку товара и оформить демонстрационный заказ.
-          </p>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="rounded-2xl border p-4">
-              <p className="text-sm text-muted-foreground">Город</p>
-              <p className="text-lg font-semibold">Москва, Арт‑кластер «Пульс»</p>
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge className="rounded-full px-3 py-1">Шоурум</Badge>
+                <h1 className="text-2xl font-semibold">Пример</h1>
+              </div>
+              <p className="text-muted-foreground max-w-2xl">
+                текст текст текст текст текст текст текст текст текст текст текст тексттексттекст
+              </p>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border p-4">
+                  <p className="text-sm text-muted-foreground">Город</p>
+                  <p className="text-lg font-semibold">Москва, Арт‑кластер «Пульс»</p>
+                </div>
+                <div className="rounded-2xl border p-4">
+                  <p className="text-sm text-muted-foreground">Часы работы</p>
+                  <p className="text-lg font-semibold">Ежедневно 10:00–21:00</p>
+                </div>
+                <div className="rounded-2xl border p-4">
+                  <p className="text-sm text-muted-foreground">Данные</p>
+                  <p className="text-lg font-semibold">Данные</p>
+                </div>
+              </div>
             </div>
-            <div className="rounded-2xl border p-4">
-              <p className="text-sm text-muted-foreground">Часы работы</p>
-              <p className="text-lg font-semibold">Ежедневно 10:00–21:00</p>
-            </div>
-            <div className="rounded-2xl border p-4">
-              <p className="text-sm text-muted-foreground">Демонстрации</p>
-              <p className="text-lg font-semibold">Примерка, фотозона, стилист</p>
+            <div className="relative h-60 overflow-hidden rounded-3xl">
+              <img
+                src="https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1200&q=80"
+                alt="Интерьер шоурума"
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute inset-0 bg-black/20" />
+              <div className="absolute bottom-4 left-4 rounded-2xl bg-white/90 px-4 py-2 text-sm font-medium">
+                Тект на лого
+              </div>
             </div>
           </div>
         </section>
 
         <section className="bg-white rounded-2xl p-6 border shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+            <div className="space-y-2">
               <p className="text-sm uppercase text-muted-foreground">Рекламный блок</p>
               <h2 className="text-xl font-semibold">Осенняя капсула 2025</h2>
               <p className="text-muted-foreground max-w-xl">
                 Забронируйте витрину для презентации новой коллекции — специальная цена для шоурумов и
                 дизайн‑студий до конца месяца.
               </p>
+              <Button className="rounded-full mt-3">Забронировать слот</Button>
             </div>
-            <Button className="rounded-full">Забронировать слот</Button>
+            <div className="relative h-48 overflow-hidden rounded-3xl">
+              <img
+                src="https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=1200&q=80"
+                alt="Рекламная витрина коллекции"
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute inset-0 bg-black/25" />
+              <div className="absolute bottom-4 left-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold">
+                -15% на экспозицию
+              </div>
+            </div>
           </div>
         </section>
 
@@ -585,34 +610,61 @@ export default function ShowroomCatalogPage() {
       </Dialog>
 
       <Dialog open={cartOpen} onOpenChange={setCartOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-4xl">
           <DialogTitle>Оформление заказа</DialogTitle>
-          <div className="grid gap-6 md:grid-cols-[1.3fr_1fr]">
+          <div className="grid gap-6 md:grid-cols-[1.4fr_1fr]">
             <div className="space-y-4">
-              {cartItems.length === 0 && (
-                <p className="text-sm text-muted-foreground">Корзина пуста. Добавьте товары из каталога.</p>
-              )}
-              {cartItems.map((item) => {
-                const product = products.find((prod) => prod.id === item.id);
-                if (!product) return null;
-                return (
-                  <div key={`${item.id}-${item.size}-${item.color}`} className="flex gap-4 border rounded-2xl p-4">
-                    <img src={product.image} alt={product.name} className="h-20 w-20 rounded-xl object-cover" />
-                    <div className="flex-1">
-                      <p className="font-semibold">{product.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Размер: {item.size} · Цвет: {item.color}
-                      </p>
-                      <div className="flex items-center justify-between mt-2">
-                        <p className="text-sm">Количество: {item.quantity}</p>
-                        <p className="font-semibold">
-                          {(product.price * item.quantity).toLocaleString("ru-RU")} ₽
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+                {cartItems.length === 0 && (
+                  <p className="text-sm text-muted-foreground">Корзина пуста. Добавьте товары из каталога.</p>
+                )}
+                {cartItems.map((item) => {
+                  const product = products.find((prod) => prod.id === item.id);
+                  if (!product) return null;
+                  return (
+                    <div key={`${item.id}-${item.size}-${item.color}`} className="flex gap-4 border rounded-2xl p-4">
+                      <img src={product.image} alt={product.name} className="h-20 w-20 rounded-xl object-cover" />
+                      <div className="flex-1">
+                        <p className="font-semibold">{product.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Размер: {item.size} · Цвет: {item.color}
                         </p>
+                        <div className="flex items-center justify-between mt-2">
+                          <p className="text-sm">Количество: {item.quantity}</p>
+                          <p className="font-semibold">
+                            {(product.price * item.quantity).toLocaleString("ru-RU")} ₽
+                          </p>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+              <div className="rounded-2xl border p-4 space-y-3">
+                <h3 className="text-base font-semibold">Данные для оформления</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="order-name">Имя</Label>
+                    <Input id="order-name" placeholder="Алексей" />
                   </div>
-                );
-              })}
+                  <div className="space-y-1">
+                    <Label htmlFor="order-phone">Телефон</Label>
+                    <Input id="order-phone" placeholder="+7 (999) 123-45-67" />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="order-email">Email</Label>
+                  <Input id="order-email" placeholder="alexey@mail.ru" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="order-address">Адрес доставки</Label>
+                  <Input id="order-address" placeholder="ул. Тверская, 12, офис 8" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="order-comment">Комментарий</Label>
+                  <Input id="order-comment" placeholder="Позвонить за 30 минут до доставки" />
+                </div>
+              </div>
             </div>
             <div className="space-y-4">
               <div className="rounded-2xl border p-4">

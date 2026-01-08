@@ -277,6 +277,14 @@ function OrderCard({ order, onStatusChange, onInfo, updating, nextStatus, nextLa
             <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-lg">#{order.number}</CardTitle>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={() => onInfo(order.id)}
+                    >
+                        Подробнее
+                    </Button>
                     <span className="text-sm text-muted-foreground">{formatTime(order.created_at)}</span>
                 </div>
                 <CardDescription>{deliveryMethodLabel} • {order.customer_name}</CardDescription>
@@ -295,14 +303,6 @@ function OrderCard({ order, onStatusChange, onInfo, updating, nextStatus, nextLa
 
                 {/* Action */}
                 <div className="flex gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => onInfo(order.id)}
-                    >
-                        Инфо
-                    </Button>
                     <Button
                         className="flex-[2]"
                         size="sm"

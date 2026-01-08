@@ -125,30 +125,35 @@
   display: none;
 }
 
-/* глобально */
-.scrollbar-hide {
-  -ms-overflow-style: none;  /* IE и Edge */
-  scrollbar-width: none;     /* Firefox */
-}
-
-.scrollbar-hide::-webkit-scrollbar {
-  display: none; /* Chrome, Safari и Opera */
-}
-
+/* 1. Базовые стили */
 .scrollbar-visible {
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  /* Убрали display: block и -webkit-appearance, они обычно не нужны для div */
 }
 
+/* 2. Стилизация для Chrome, Safari, Edge (Webkit) */
+/* Эти стили будут работать в Chrome, если нет конфликта с scrollbar-width */
 .scrollbar-visible::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 .scrollbar-visible::-webkit-scrollbar-thumb {
-  background-color: rgba(15, 23, 42, 0.35);
+  background-color: rgba(15, 23, 42, 0.503);
   border-radius: 999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
 }
 
 .scrollbar-visible::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 3. Стилизация только для Firefox */
+/* Используем @supports, чтобы Chrome игнорировал этот блок */
+@supports not selector(::-webkit-scrollbar) {
+  .scrollbar-visible {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(15, 23, 42, 0.503) transparent;
+  }
 }

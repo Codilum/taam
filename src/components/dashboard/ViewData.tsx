@@ -289,7 +289,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     if (numbers.length > 0) {
       result += ` (${numbers.slice(0, 3)}`;
     }
-    if (numbers.length >= 3) {
+    if (numbers.length > 3) {
       result += ")";
     }
     if (numbers.length > 3) {
@@ -385,7 +385,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     setCartStep(1);
     setOrderResult(null);
     setDeliveryTime(deliverySettings[deliveryMethod]?.allow_asap ? 'asap' : 'scheduled');
-    setFormData(initialFormState);
+    setFormData({ ...initialFormState, city: data?.city || '' });
   };
 
   const findMenuItemById = (id: number): CartItemDetails | null => {
@@ -463,6 +463,11 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
         currency: restaurantData.currency || "RUB",
         delivery_settings: restaurantData.delivery_settings || null,
       });
+
+      // Initialize form city if not already set or if it's empty
+      if (!formData.city && restaurantData.city) {
+        setFormData(prev => ({ ...prev, city: restaurantData.city || "" }));
+      }
 
       setDeliverySettings(parsedDeliverySettings);
 
@@ -625,12 +630,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     }
   }, [currentMethodSettings?.allow_asap, currentMethodSettings?.allow_scheduled, deliveryTime]);
 
-  useEffect(() => {
-    if (deliveryMethod !== 'delivery') return;
-    if (data?.city && !formData.city.trim()) {
-      setFormData((prev) => ({ ...prev, city: data.city?.trim() || '' }));
-    }
-  }, [data?.city, deliveryMethod, formData.city]);
+
 
   useEffect(() => {
     if (!availablePaymentMethods.includes(formData.paymentMethod as PaymentMethod)) {
@@ -711,21 +711,6 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     );
   }
 
-  const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours;
-  if (isRestaurantIncomplete) {
-    return (
-      <div className="flex flex-col bg-gray-100 min-h-screen">
-        <div className="px-4 pt-4">
-          <Alert>
-            <AlertCircleIcon className="h-4 w-4" />
-            <AlertTitle>Необходимо заполнить данные!</AlertTitle>
-            <AlertDescription>Пожалуйста, заполните контактную информацию заведения.</AlertDescription>
-          </Alert>
-        </div>
-        <GeneralInfo activeTeam={activeTeam} />
-      </div>
-    );
-  }
 
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
 
@@ -1041,9 +1026,9 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
                             <span className="font-bold">{formatPrice(item.price)}</span>
                             {qty > 0 ? (
                               <div className="flex items-center gap-1">
-                                <Button size="sm" variant="secondary" className="h-7" onClick={(e) => { e.stopPropagation(); decreaseCartItem(item.id); }}>−</Button>
-                                <span className="w-8 text-center text-sm font-bold w-full">{qty}</span>
-                                <Button size="sm" className="h-7 bg-[#FFEB5A] text-black hover:bg-[#FFEB5A]/80" onClick={(e) => { e.stopPropagation(); addToCart(item.id); }}>+</Button>
+                                <Button size="sm" variant="secondary" className="h-7" style={{ flex: '2' }} onClick={(e) => { e.stopPropagation(); decreaseCartItem(item.id); }}>−</Button>
+                                <span className="w-8 text-center text-sm font-bold w-full" style={{ flex: '2' }}>{qty}</span>
+                                <Button size="sm" className="h-7 bg-[#FFEB5A] text-black hover:bg-[#FFEB5A]/80" style={{ flex: '2' }} onClick={(e) => { e.stopPropagation(); addToCart(item.id); }}>+</Button>
                               </div>
                             ) : (
                               <Button size="sm" className="w-full bg-[#FFEB5A] text-black hover:bg-[#FFEB5A]/80 font-semibold" onClick={(e) => { e.stopPropagation(); addToCart(item.id); }}>В заказ</Button>
@@ -1094,7 +1079,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
             {cartStep === 1 && (
               <div className="space-y-4">
-                <div className="max-h-[40vh] overflow-y-auto space-y-3 pr-2 scrollbar-visible">
+                <div className="max-h-[40vh] overflow-y-scroll space-y-3 pr-2 scrollbar-visible">
                   {cartDetails.map(item => (
                     <div key={item.id} className="flex gap-3 bg-gray-50 p-3 rounded-2xl">
                       <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden shrink-0">
@@ -1127,7 +1112,7 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
 
             {cartStep === 2 && (
               <div className="flex flex-col max-h-[70vh]">
-                <div className="flex-1 space-y-6 overflow-y-auto px-1 scrollbar-hide pb-4">
+                <div className="flex-1 space-y-6 overflow-y-scroll scrollbar-visible px-1  pb-4">
                   <Tabs value={deliveryMethod} className="w-full" onValueChange={(v) => {
                     const method = v as 'delivery' | 'pickup';
                     if (!deliverySettings[method]?.enabled) return;
