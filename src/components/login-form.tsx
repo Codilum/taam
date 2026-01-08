@@ -186,7 +186,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card className="overflow-hidden p-0 border-none shadow-lg">
-        <CardContent className="grid p-0 md:grid-cols-2">
+        <CardContent className="grid p-0 md:grid-cols-1">
           <div className="flex flex-col">
             <div className="p-6 md:p-8 flex flex-col h-full">
               <form onSubmit={handleSubmit} className="flex-grow">
@@ -385,18 +385,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               </p>
             </div>
           </div>
-          <div className="bg-muted relative hidden md:block">
-            <img
-              src="/gpt.png"
-              alt="Healthy Food"
-              className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.4]"
-            />
-            {/* <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-8">
-              <p className="text-white text-lg font-medium italic">
-                "Правильное питание — залог вашего успеха и отличного самочувствия с taam.menu"
-              </p>
-            </div> */}
-          </div>
+
         </CardContent>
       </Card>
     </div>

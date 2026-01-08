@@ -711,6 +711,14 @@ export default function ViewData({ activeTeam }: { activeTeam: string }) {
     );
   }
 
+  const isRestaurantIncomplete = !data.phone || !data.address || !data.city || !data.hours;
+  if (isRestaurantIncomplete) {
+    return (
+      <div className="flex flex-col bg-gray-100 min-h-screen">
+        <GeneralInfo activeTeam={activeTeam} />
+      </div>
+    );
+  }
 
   const currentCat = data.menu.find((cat) => cat.id === currentCategoryId);
 
